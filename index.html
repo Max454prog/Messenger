@@ -4,24 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Web Messenger</title>
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Styles -->
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
-    <!-- Экран авторизации / регистрации -->
+    <!-- Экран авторизации -->
     <div id="auth-screen" class="screen active">
       <div class="auth-container">
         <div class="auth-header">
           <h1>Messenger</h1>
-          <p class="auth-subtitle">Общайтесь в реальном времени</p>
+          <p class="auth-subtitle">Общайтесь с друзьями</p>
         </div>
-        <div class="auth-form" id="auth-form">
-          <div class="form-group" id="nickname-group" style="display: none;">
+        <form id="auth-form" class="auth-form">
+          <div class="form-group" id="nickname-group" style="display:none">
             <label for="nickname">Никнейм</label>
             <input type="text" id="nickname" placeholder="Придумайте имя" autocomplete="off">
           </div>
@@ -35,60 +33,81 @@
           </div>
           <div class="auth-error" id="auth-error"></div>
           <div class="auth-buttons">
-            <button type="button" id="login-btn" class="btn btn-primary">Войти</button>
-            <button type="button" id="register-btn" class="btn btn-secondary">Зарегистрироваться</button>
+            <button type="submit" id="login-btn" class="btn btn-primary">Войти</button>
+            <button type="submit" id="register-btn" class="btn btn-secondary" style="display:none">Зарегистрироваться</button>
           </div>
           <p class="auth-toggle" id="auth-toggle">
             Нет аккаунта? <a href="#" id="switch-to-register">Создать</a>
           </p>
-        </div>
+        </form>
       </div>
     </div>
 
     <!-- Экран чата -->
     <div id="chat-screen" class="screen">
       <div class="chat-layout">
-        <!-- Боковая панель -->
         <aside class="sidebar" id="sidebar">
           <div class="sidebar-header">
             <h2>Чаты</h2>
-            <button id="close-sidebar" class="icon-btn" aria-label="Закрыть меню">✕</button>
+            <button id="close-sidebar" class="icon-btn">✕</button>
           </div>
           <ul class="chat-list" id="chat-list">
             <li class="chat-item active" data-chat-id="general">
               <span class="chat-icon">💬</span>
               <span class="chat-name">Общий чат</span>
             </li>
-            <!-- Здесь можно добавлять другие чаты -->
           </ul>
           <div class="sidebar-footer">
             <div class="user-info" id="user-info">
+              <img id="sidebar-avatar" class="avatar-small" src="" alt="avatar" style="display:none">
               <span id="current-user-nickname"></span>
             </div>
+            <button id="profile-btn" class="btn btn-profile">Профиль</button>
             <button id="logout-btn" class="btn btn-logout">Выйти</button>
           </div>
         </aside>
 
-        <!-- Основная область чата -->
         <main class="main-chat">
           <header class="chat-header">
-            <button id="menu-toggle" class="icon-btn hamburger" aria-label="Открыть меню">☰</button>
+            <button id="menu-toggle" class="icon-btn hamburger">☰</button>
             <h3 id="current-chat-title">Общий чат</h3>
           </header>
           <div class="messages-container" id="messages-container">
-            <!-- Сообщения будут здесь -->
             <div class="messages-list" id="messages-list"></div>
           </div>
           <form class="message-form" id="message-form">
-            <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off" required>
+            <div class="input-wrapper">
+              <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off" required>
+              <button type="button" id="emoji-btn" class="icon-btn emoji-btn">😊</button>
+              <div class="emoji-panel" id="emoji-panel" style="display:none"></div>
+            </div>
             <button type="submit" class="btn btn-send">Отправить</button>
           </form>
         </main>
       </div>
     </div>
+
+    <!-- Модальное окно профиля -->
+    <div id="profile-modal" class="modal" style="display:none">
+      <div class="modal-content">
+        <h3>Редактировать профиль</h3>
+        <div class="avatar-upload">
+          <img id="profile-avatar-preview" class="avatar-large" src="" alt="Аватар">
+          <label for="avatar-input" class="btn btn-secondary">Загрузить фото</label>
+          <input type="file" id="avatar-input" accept="image/*" style="display:none">
+        </div>
+        <div class="form-group">
+          <label for="profile-nickname">Никнейм</label>
+          <input type="text" id="profile-nickname">
+        </div>
+        <div class="modal-buttons">
+          <button id="save-profile" class="btn btn-primary">Сохранить</button>
+          <button id="close-modal" class="btn btn-secondary">Отмена</button>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <!-- Import Map для Firebase модулей -->
   <script type="importmap">
     {
       "imports": {
@@ -98,7 +117,6 @@
       }
     }
   </script>
-  <!-- Основной скрипт -->
   <script type="module" src="app.js"></script>
 </body>
 </html>
