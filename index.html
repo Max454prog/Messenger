@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Messenger</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Экран авторизации / регистрации -->
+    <div id="auth-screen" class="screen active">
+      <div class="auth-container">
+        <div class="auth-header">
+          <h1>Messenger</h1>
+          <p class="auth-subtitle">Общайтесь в реальном времени</p>
+        </div>
+        <div class="auth-form" id="auth-form">
+          <div class="form-group" id="nickname-group" style="display: none;">
+            <label for="nickname">Никнейм</label>
+            <input type="text" id="nickname" placeholder="Придумайте имя" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" placeholder="Введите email" autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label for="password">Пароль</label>
+            <input type="password" id="password" placeholder="Введите пароль" autocomplete="current-password">
+          </div>
+          <div class="auth-error" id="auth-error"></div>
+          <div class="auth-buttons">
+            <button type="button" id="login-btn" class="btn btn-primary">Войти</button>
+            <button type="button" id="register-btn" class="btn btn-secondary">Зарегистрироваться</button>
+          </div>
+          <p class="auth-toggle" id="auth-toggle">
+            Нет аккаунта? <a href="#" id="switch-to-register">Создать</a>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Экран чата -->
+    <div id="chat-screen" class="screen">
+      <div class="chat-layout">
+        <!-- Боковая панель -->
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-header">
+            <h2>Чаты</h2>
+            <button id="close-sidebar" class="icon-btn" aria-label="Закрыть меню">✕</button>
+          </div>
+          <ul class="chat-list" id="chat-list">
+            <li class="chat-item active" data-chat-id="general">
+              <span class="chat-icon">💬</span>
+              <span class="chat-name">Общий чат</span>
+            </li>
+            <!-- Здесь можно добавлять другие чаты -->
+          </ul>
+          <div class="sidebar-footer">
+            <div class="user-info" id="user-info">
+              <span id="current-user-nickname"></span>
+            </div>
+            <button id="logout-btn" class="btn btn-logout">Выйти</button>
+          </div>
+        </aside>
+
+        <!-- Основная область чата -->
+        <main class="main-chat">
+          <header class="chat-header">
+            <button id="menu-toggle" class="icon-btn hamburger" aria-label="Открыть меню">☰</button>
+            <h3 id="current-chat-title">Общий чат</h3>
+          </header>
+          <div class="messages-container" id="messages-container">
+            <!-- Сообщения будут здесь -->
+            <div class="messages-list" id="messages-list"></div>
+          </div>
+          <form class="message-form" id="message-form">
+            <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off" required>
+            <button type="submit" class="btn btn-send">Отправить</button>
+          </form>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Map для Firebase модулей -->
+  <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"
+      }
+    }
+  </script>
+  <!-- Основной скрипт -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
