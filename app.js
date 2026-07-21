@@ -1,12 +1,13 @@
 // ================== КОНФИГУРАЦИЯ FIREBASE ==================
 // Замените значения на свои из консоли Firebase
 const firebaseConfig = {
-  apiKey: "МЕСТО_ДЛЯ_API_KEY",
-  authDomain: "МЕСТО_ДЛЯ_AUTH_DOMAIN",
-  projectId: "МЕСТО_ДЛЯ_PROJECT_ID",
-  storageBucket: "МЕСТО_ДЛЯ_STORAGE_BUCKET",
-  messagingSenderId: "МЕСТО_ДЛЯ_MESSAGING_SENDER_ID",
-  appId: "МЕСТО_ДЛЯ_APP_ID"
+  apiKey: "AIzaSyDH4JqdICmjf_IzC2h58arcQiSAWkV4AcA",
+  authDomain: "messenger-41f5f.firebaseapp.com",
+  projectId: "messenger-41f5f",
+  storageBucket: "messenger-41f5f.firebasestorage.app",
+  messagingSenderId: "663121888236",
+  appId: "1:663121888236:web:f5997f256fd153fde9b6c9",
+  measurementId: "G-87QPL1SK7N"
 };
 
 // ================== ИМПОРТЫ FIREBASE ==================
