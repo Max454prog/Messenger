@@ -284,14 +284,17 @@ async function startCall(calleeUid, calleeName) {
 
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    console.log('✅ Микрофон успешно получен');
     createPeerConnection();
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     await updateDoc(callDocRef, { offer: peerConnection.localDescription });
+    console.log('✅ Offer записан в Firestore');
     listenForCallUpdates();
   } catch (err) {
-    console.error('Ошибка доступа к микрофону:', err);
+    console.error('❌ Ошибка доступа к микрофону:', err);
+    alert('Не удалось получить доступ к микрофону. Проверьте настройки браузера.');
     hangupCall();
   }
 }
@@ -364,13 +367,14 @@ async function answerCall() {
     
     // Проверяем, что звонок ещё активен и offer корректен
     if (!data || data.status !== 'ringing' || !data.offer || !data.offer.type) {
-      console.warn('Невозможно принять звонок: неверный статус или отсутствует offer');
+      console.warn('❌ Невозможно принять звонок: неверный статус или отсутствует offer');
       alert('Звонок уже не активен или произошла ошибка. Попросите друга позвонить ещё раз.');
       hangupCall();
       return;
     }
 
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    console.log('✅ Микрофон получен при ответе');
     createPeerConnection();
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -379,7 +383,7 @@ async function answerCall() {
     await updateDoc(callDocRef, { answer: peerConnection.localDescription, status: 'ongoing' });
     listenForCallUpdates();
   } catch (err) {
-    console.error('Ошибка при ответе на звонок:', err);
+    console.error('❌ Ошибка при ответе на звонок:', err);
     hangupCall();
   }
 }
