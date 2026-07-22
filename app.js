@@ -289,7 +289,13 @@ async function startCall(calleeUid, calleeName) {
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-    await updateDoc(callDocRef, { offer: peerConnection.localDescription });
+    // Сохраняем offer как простой объект { type, sdp }
+    await setDoc(callDocRef, { 
+      offer: { 
+        type: peerConnection.localDescription.type, 
+        sdp: peerConnection.localDescription.sdp 
+      } 
+    }, { merge: true });
     console.log('✅ Offer записан в Firestore');
     listenForCallUpdates();
   } catch (err) {
@@ -380,7 +386,14 @@ async function answerCall() {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    await updateDoc(callDocRef, { answer: peerConnection.localDescription, status: 'ongoing' });
+    // Сохраняем answer как простой объект { type, sdp }
+    await updateDoc(callDocRef, { 
+      answer: { 
+        type: peerConnection.localDescription.type, 
+        sdp: peerConnection.localDescription.sdp 
+      }, 
+      status: 'ongoing' 
+    });
     listenForCallUpdates();
   } catch (err) {
     console.error('❌ Ошибка при ответе на звонок:', err);
