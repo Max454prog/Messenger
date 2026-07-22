@@ -11,7 +11,7 @@ const firebaseConfig = {
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -46,12 +46,33 @@ const sidebarAvatar = document.getElementById('sidebar-avatar');
 const currentUserNickname = document.getElementById('current-user-nickname');
 const emojiBtn = document.getElementById('emoji-btn');
 const emojiPanel = document.getElementById('emoji-panel');
+const callBtn = document.getElementById('call-btn');
+const callModal = document.getElementById('call-modal');
+const callStatus = document.getElementById('call-status');
+const callUsername = document.getElementById('call-username');
+const acceptCallBtn = document.getElementById('accept-call');
+const rejectCallBtn = document.getElementById('reject-call');
+const hangupCallBtn = document.getElementById('hangup-call');
 
 let currentUser = null;
 let currentUserData = { nickname: '', avatarUrl: '' };
 let activeChatId = 'general';
 let unsubscribeMessages = null;
 let isLoginMode = true;
+
+// WebRTC переменные
+let localStream = null;
+let peerConnection = null;
+let currentCallId = null;
+let currentCallUserId = null;
+let currentCallUserName = null;
+let isCaller = false;
+let callDocRef = null;
+let unsubscribeCall = null;
+let unsubscribeIncoming = null;
+let candidatesQueue = [];
+
+const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 // Вспомогательные функции
 function showScreen(screen) {
@@ -70,6 +91,10 @@ function isScrolledToBottom() {
 function scrollToBottom() { messagesContainer.scrollTop = messagesContainer.scrollHeight; }
 function clearAuthError() { authError.textContent = ''; }
 function displayAuthError(msg) { authError.textContent = msg; }
+function linkify(text) {
+  const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+  return text.replace(urlRegex, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+}
 
 function setLoginMode(mode) {
   isLoginMode = mode;
@@ -124,9 +149,9 @@ function updateSidebarProfile() {
   }
 }
 function compressImage(file, maxW=200, maxH=200) {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = e => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
@@ -174,7 +199,7 @@ function addMessageToUI(id, data) {
   header.innerHTML = `<span class="message-username">${data.userName || 'Пользователь'}</span><span class="message-time">${formatTime(data.timestamp)}</span>`;
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
-  bubble.textContent = data.text;
+  bubble.innerHTML = linkify(data.text);
   body.appendChild(header);
   body.appendChild(bubble);
 
@@ -219,6 +244,212 @@ emojiBtn.addEventListener('click', (e) => {
 });
 document.addEventListener('click', () => { emojiPanel.style.display = 'none'; });
 
+// ================== ЗВОНКИ ==================
+async function startCall(calleeUid, calleeName) {
+  if (!currentUser) return;
+  const callId = `${currentUser.uid}_${calleeUid}_${Date.now()}`;
+  callDocRef = doc(db, 'calls', callId);
+  await setDoc(callDocRef, {
+    caller: currentUser.uid,
+    callerName: currentUserData.nickname || 'Пользователь',
+    callee: calleeUid,
+    calleeName: calleeName,
+    status: 'ringing',
+    createdAt: serverTimestamp()
+  });
+  currentCallId = callId;
+  currentCallUserId = calleeUid;
+  currentCallUserName = calleeName;
+  isCaller = true;
+
+  callStatus.textContent = 'Звоним...';
+  callUsername.textContent = calleeName;
+  acceptCallBtn.style.display = 'none';
+  rejectCallBtn.style.display = 'none';
+  hangupCallBtn.style.display = 'inline-flex';
+  callModal.style.display = 'flex';
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    createPeerConnection();
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    await updateDoc(callDocRef, { offer: peerConnection.localDescription });
+    listenForCallUpdates();
+  } catch (err) {
+    console.error('Ошибка доступа к микрофону:', err);
+    hangupCall();
+  }
+}
+
+function createPeerConnection() {
+  peerConnection = new RTCPeerConnection(servers);
+  peerConnection.onicecandidate = async (event) => {
+    if (event.candidate) {
+      await updateDoc(callDocRef, {
+        candidates: arrayUnion({
+          type: 'candidate',
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex
+        })
+      });
+    }
+  };
+  peerConnection.ontrack = (event) => {
+    const remoteAudio = new Audio();
+    remoteAudio.srcObject = event.streams[0];
+    remoteAudio.play().catch(e => console.error(e));
+    callStatus.textContent = 'Разговор...';
+  };
+  peerConnection.oniceconnectionstatechange = () => {
+    if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed') {
+      hangupCall();
+    }
+  };
+}
+
+function listenForCallUpdates() {
+  if (!callDocRef) return;
+  unsubscribeCall = onSnapshot(callDocRef, async (snapshot) => {
+    const data = snapshot.data();
+    if (!data) return;
+    if (data.status === 'rejected' || data.status === 'ended') {
+      hangupCall();
+      return;
+    }
+    if (isCaller && data.answer && peerConnection.currentRemoteDescription === null) {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+      while (candidatesQueue.length) {
+        const candidate = candidatesQueue.shift();
+        if (candidate.type === 'candidate') {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+      }
+    }
+    if (data.candidates) {
+      data.candidates.forEach(candidate => {
+        if (candidate.type === 'candidate' && peerConnection.remoteDescription) {
+          peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.error(e));
+        } else if (candidate.type === 'candidate' && !peerConnection.remoteDescription) {
+          candidatesQueue.push(candidate);
+        }
+      });
+    }
+  });
+}
+
+async function answerCall() {
+  if (!callDocRef) return;
+  acceptCallBtn.style.display = 'none';
+  rejectCallBtn.style.display = 'none';
+  hangupCallBtn.style.display = 'inline-flex';
+  try {
+    const snap = await getDoc(callDocRef);
+    const data = snap.data();
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    createPeerConnection();
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    await updateDoc(callDocRef, { answer: peerConnection.localDescription, status: 'ongoing' });
+    listenForCallUpdates();
+  } catch (err) {
+    console.error('Ошибка при ответе на звонок:', err);
+    hangupCall();
+  }
+}
+
+async function rejectCall() {
+  if (callDocRef) {
+    await updateDoc(callDocRef, { status: 'rejected' });
+  }
+  hideCallModal();
+}
+
+async function hangupCall() {
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  if (callDocRef && currentCallId) {
+    try { await updateDoc(callDocRef, { status: 'ended' }); } catch (e) {}
+  }
+  if (unsubscribeCall) {
+    unsubscribeCall();
+    unsubscribeCall = null;
+  }
+  hideCallModal();
+  currentCallId = null;
+  currentCallUserId = null;
+  currentCallUserName = null;
+  isCaller = false;
+  candidatesQueue = [];
+}
+
+function hideCallModal() {
+  callModal.style.display = 'none';
+}
+
+// Прослушивание входящих звонков
+function listenForIncomingCalls() {
+  if (!currentUser) return;
+  const callsRef = collection(db, 'calls');
+  const q = query(callsRef, where('callee', '==', currentUser.uid), where('status', '==', 'ringing'));
+  unsubscribeIncoming = onSnapshot(q, (snapshot) => {
+    snapshot.docChanges().forEach(change => {
+      if (change.type === 'added') {
+        const callData = change.doc.data();
+        callDocRef = doc(db, 'calls', change.doc.id);
+        currentCallId = change.doc.id;
+        currentCallUserId = callData.caller;
+        currentCallUserName = callData.callerName;
+        callStatus.textContent = 'Входящий звонок...';
+        callUsername.textContent = callData.callerName;
+        acceptCallBtn.style.display = 'inline-flex';
+        rejectCallBtn.style.display = 'inline-flex';
+        hangupCallBtn.style.display = 'none';
+        callModal.style.display = 'flex';
+      }
+    });
+  });
+}
+
+// Кнопка звонка в шапке чата
+callBtn.addEventListener('click', () => {
+  // Для общего чата ищем UID другого участника (можно расширить логику)
+  // Пока будем использовать заглушку: нужно получить UID собеседника из сообщений или из списка пользователей.
+  // Упростим: запросим у пользователя email друга, а потом найдём его UID.
+  const friendEmail = prompt('Введите email друга, которому хотите позвонить:');
+  if (!friendEmail) return;
+  // Найдём пользователя по email в коллекции users
+  const usersRef = collection(db, 'users');
+  const q = query(usersRef, where('email', '==', friendEmail));
+  getDocs(q).then(snapshot => {
+    if (snapshot.empty) {
+      alert('Пользователь с таким email не найден.');
+      return;
+    }
+    const friendDoc = snapshot.docs[0];
+    const friendUid = friendDoc.id;
+    const friendName = friendDoc.data().nickname || 'Пользователь';
+    startCall(friendUid, friendName);
+  }).catch(err => {
+    console.error('Ошибка поиска пользователя:', err);
+    alert('Не удалось найти пользователя.');
+  });
+});
+
+acceptCallBtn.addEventListener('click', answerCall);
+rejectCallBtn.addEventListener('click', rejectCall);
+hangupCallBtn.addEventListener('click', hangupCall);
+
 // Обработчики
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault(); clearAuthError();
@@ -242,7 +473,11 @@ authForm.addEventListener('submit', async (e) => {
 loginBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
 registerBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
 switchLink.addEventListener('click', e=>{ e.preventDefault(); clearAuthError(); setLoginMode(false); });
-logoutBtn.addEventListener('click', async ()=>{ if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;} await signOut(auth); });
+logoutBtn.addEventListener('click', async ()=>{ 
+  if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;} 
+  if(unsubscribeIncoming){unsubscribeIncoming();unsubscribeIncoming=null;}
+  await signOut(auth); 
+});
 messageForm.addEventListener('submit', e=>{ e.preventDefault(); sendMessage(messageInput.value); });
 profileBtn.addEventListener('click', ()=>{
   profileNickname.value = currentUserData.nickname || '';
@@ -286,9 +521,11 @@ onAuthStateChanged(auth, async user => {
     updateSidebarProfile();
     showScreen(chatScreen);
     subscribeToMessages(activeChatId);
+    listenForIncomingCalls();
   } else {
     currentUser=null; currentUserData={nickname:'',avatarUrl:''};
     if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
+    if(unsubscribeIncoming){unsubscribeIncoming();unsubscribeIncoming=null;}
     messagesList.innerHTML='';
     showScreen(authScreen);
     emailInput.value=''; passwordInput.value=''; nicknameInput.value='';

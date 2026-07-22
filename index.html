@@ -71,6 +71,8 @@
           <header class="chat-header">
             <button id="menu-toggle" class="icon-btn hamburger">☰</button>
             <h3 id="current-chat-title">Общий чат</h3>
+            <!-- Кнопка аудиозвонка -->
+            <button id="call-btn" class="icon-btn call-btn" title="Позвонить">📞</button>
           </header>
           <div class="messages-container" id="messages-container">
             <div class="messages-list" id="messages-list"></div>
@@ -103,6 +105,19 @@
         <div class="modal-buttons">
           <button id="save-profile" class="btn btn-primary">Сохранить</button>
           <button id="close-modal" class="btn btn-secondary">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Модальное окно звонка -->
+    <div id="call-modal" class="modal" style="display:none">
+      <div class="modal-content">
+        <h3 id="call-status">Звонок</h3>
+        <p id="call-username"></p>
+        <div class="modal-buttons">
+          <button id="accept-call" class="btn btn-primary" style="display:none">Принять</button>
+          <button id="reject-call" class="btn btn-danger" style="display:none">Отклонить</button>
+          <button id="hangup-call" class="btn btn-danger" style="display:none">Завершить</button>
         </div>
       </div>
     </div>
