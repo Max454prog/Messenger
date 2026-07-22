@@ -320,10 +320,14 @@ function createPeerConnection() {
     }
   };
   peerConnection.ontrack = (event) => {
-    const remoteAudio = new Audio();
-    remoteAudio.srcObject = event.streams[0];
-    remoteAudio.play().catch(e => console.error(e));
-    callStatus.textContent = 'Разговор...';
+    const remoteAudio = document.getElementById('remote-audio');
+    if (remoteAudio) {
+      remoteAudio.srcObject = event.streams[0];
+      remoteAudio.play().catch(e => console.error('Ошибка воспроизведения удалённого аудио:', e));
+      callStatus.textContent = 'Разговор...';
+    } else {
+      console.error('Не найден элемент remote-audio');
+    }
   };
   peerConnection.oniceconnectionstatechange = () => {
     if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed') {
@@ -338,6 +342,9 @@ function listenForCallUpdates() {
     const data = snapshot.data();
     if (!data) return;
     if (data.status === 'rejected' || data.status === 'ended') {
+      // Показываем, что звонок завершён
+      callStatus.textContent = 'Звонок завершён';
+      // Закрываем соединение и чистим ресурсы
       hangupCall();
       return;
     }
@@ -409,6 +416,12 @@ async function rejectCall() {
 }
 
 async function hangupCall() {
+  // Остановить воспроизведение удалённого аудио, если есть
+  const remoteAudio = document.getElementById('remote-audio');
+  if (remoteAudio) {
+    remoteAudio.srcObject = null;
+    remoteAudio.pause();
+  }
   if (peerConnection) {
     peerConnection.close();
     peerConnection = null;
