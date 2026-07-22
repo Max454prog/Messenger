@@ -1,14 +1,12 @@
 // КОНФИГУРАЦИЯ FIREBASE (вставьте свои ключи)
 const firebaseConfig = {
-  apiKey: "AIzaSyDH4JqdICmjf_IzC2h58arcQiSAWkV4AcA",
-  authDomain: "messenger-41f5f.firebaseapp.com",
-  projectId: "messenger-41f5f",
-  storageBucket: "messenger-41f5f.firebasestorage.app",
-  messagingSenderId: "663121888236",
-  appId: "1:663121888236:web:f5997f256fd153fde9b6c9",
-  measurementId: "G-87QPL1SK7N"
+  apiKey: "МЕСТО_ДЛЯ_API_KEY",
+  authDomain: "МЕСТО_ДЛЯ_AUTH_DOMAIN",
+  projectId: "МЕСТО_ДЛЯ_PROJECT_ID",
+  storageBucket: "МЕСТО_ДЛЯ_STORAGE_BUCKET",
+  messagingSenderId: "МЕСТО_ДЛЯ_MESSAGING_SENDER_ID",
+  appId: "МЕСТО_ДЛЯ_APP_ID"
 };
-
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
@@ -362,6 +360,15 @@ async function answerCall() {
   try {
     const snap = await getDoc(callDocRef);
     const data = snap.data();
+    
+    // Проверяем, что звонок ещё активен и offer корректен
+    if (!data || data.status !== 'ringing' || !data.offer || !data.offer.type) {
+      console.warn('Невозможно принять звонок: неверный статус или отсутствует offer');
+      alert('Звонок уже не активен или произошла ошибка. Попросите друга позвонить ещё раз.');
+      hangupCall();
+      return;
+    }
+
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     createPeerConnection();
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
