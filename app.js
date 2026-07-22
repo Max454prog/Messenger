@@ -9,6 +9,7 @@ const firebaseConfig = {
   measurementId: "G-87QPL1SK7N"
 };
 
+
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, updateDoc, arrayUnion, getDocs } from 'firebase/firestore';
@@ -17,7 +18,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// DOM элементы
+// DOM-элементы
 const authScreen = document.getElementById('auth-screen');
 const chatScreen = document.getElementById('chat-screen');
 const authForm = document.getElementById('auth-form');
@@ -46,7 +47,6 @@ const sidebarAvatar = document.getElementById('sidebar-avatar');
 const currentUserNickname = document.getElementById('current-user-nickname');
 const emojiBtn = document.getElementById('emoji-btn');
 const emojiPanel = document.getElementById('emoji-panel');
-const callBtn = document.getElementById('call-btn');
 const callModal = document.getElementById('call-modal');
 const callStatus = document.getElementById('call-status');
 const callUsername = document.getElementById('call-username');
@@ -203,6 +203,19 @@ function addMessageToUI(id, data) {
   body.appendChild(header);
   body.appendChild(bubble);
 
+  // Кнопка аудиозвонка для чужих сообщений
+  if (!isOwn) {
+    const callBtn = document.createElement('button');
+    callBtn.className = 'msg-call-btn';
+    callBtn.innerHTML = '📞';
+    callBtn.title = 'Позвонить';
+    callBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startCall(data.userId, data.userName);
+    });
+    body.appendChild(callBtn);
+  }
+
   msgEl.appendChild(avatarImg);
   msgEl.appendChild(body);
   messagesList.appendChild(msgEl);
@@ -244,7 +257,7 @@ emojiBtn.addEventListener('click', (e) => {
 });
 document.addEventListener('click', () => { emojiPanel.style.display = 'none'; });
 
-// ================== ЗВОНКИ ==================
+// ================== ЗВОНКИ (аудио) ==================
 async function startCall(calleeUid, calleeName) {
   if (!currentUser) return;
   const callId = `${currentUser.uid}_${calleeUid}_${Date.now()}`;
@@ -255,6 +268,7 @@ async function startCall(calleeUid, calleeName) {
     callee: calleeUid,
     calleeName: calleeName,
     status: 'ringing',
+    video: false,
     createdAt: serverTimestamp()
   });
   currentCallId = callId;
@@ -421,36 +435,12 @@ function listenForIncomingCalls() {
   });
 }
 
-// Кнопка звонка в шапке чата
-callBtn.addEventListener('click', () => {
-  // Для общего чата ищем UID другого участника (можно расширить логику)
-  // Пока будем использовать заглушку: нужно получить UID собеседника из сообщений или из списка пользователей.
-  // Упростим: запросим у пользователя email друга, а потом найдём его UID.
-  const friendEmail = prompt('Введите email друга, которому хотите позвонить:');
-  if (!friendEmail) return;
-  // Найдём пользователя по email в коллекции users
-  const usersRef = collection(db, 'users');
-  const q = query(usersRef, where('email', '==', friendEmail));
-  getDocs(q).then(snapshot => {
-    if (snapshot.empty) {
-      alert('Пользователь с таким email не найден.');
-      return;
-    }
-    const friendDoc = snapshot.docs[0];
-    const friendUid = friendDoc.id;
-    const friendName = friendDoc.data().nickname || 'Пользователь';
-    startCall(friendUid, friendName);
-  }).catch(err => {
-    console.error('Ошибка поиска пользователя:', err);
-    alert('Не удалось найти пользователя.');
-  });
-});
-
+// Кнопки принять/отклонить/завершить
 acceptCallBtn.addEventListener('click', answerCall);
 rejectCallBtn.addEventListener('click', rejectCall);
 hangupCallBtn.addEventListener('click', hangupCall);
 
-// Обработчики
+// Обработчики авторизации
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault(); clearAuthError();
   const email = emailInput.value.trim();
