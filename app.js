@@ -1,12 +1,11 @@
 // КОНФИГУРАЦИЯ FIREBASE (вставьте свои ключи)
 const firebaseConfig = {
-  apiKey: "AIzaSyDH4JqdICmjf_IzC2h58arcQiSAWkV4AcA",
-  authDomain: "messenger-41f5f.firebaseapp.com",
-  projectId: "messenger-41f5f",
-  storageBucket: "messenger-41f5f.firebasestorage.app",
-  messagingSenderId: "663121888236",
-  appId: "1:663121888236:web:f5997f256fd153fde9b6c9",
-  measurementId: "G-87QPL1SK7N"
+  apiKey: "МЕСТО_ДЛЯ_API_KEY",
+  authDomain: "МЕСТО_ДЛЯ_AUTH_DOMAIN",
+  projectId: "МЕСТО_ДЛЯ_PROJECT_ID",
+  storageBucket: "МЕСТО_ДЛЯ_STORAGE_BUCKET",
+  messagingSenderId: "МЕСТО_ДЛЯ_MESSAGING_SENDER_ID",
+  appId: "МЕСТО_ДЛЯ_APP_ID"
 };
 
 import { initializeApp } from 'firebase/app';
@@ -320,10 +319,14 @@ function createPeerConnection() {
     }
   };
   peerConnection.ontrack = (event) => {
-    const remoteAudio = new Audio();
-    remoteAudio.srcObject = event.streams[0];
-    remoteAudio.play().catch(e => console.error(e));
-    callStatus.textContent = 'Разговор...';
+    const remoteAudio = document.getElementById('remote-audio');
+    if (remoteAudio) {
+      remoteAudio.srcObject = event.streams[0];
+      remoteAudio.play().catch(e => console.error('Ошибка воспроизведения удалённого аудио:', e));
+      callStatus.textContent = 'Разговор...';
+    } else {
+      console.error('Не найден элемент remote-audio');
+    }
   };
   peerConnection.oniceconnectionstatechange = () => {
     if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed') {
@@ -338,6 +341,9 @@ function listenForCallUpdates() {
     const data = snapshot.data();
     if (!data) return;
     if (data.status === 'rejected' || data.status === 'ended') {
+      // Показываем, что звонок завершён
+      callStatus.textContent = 'Звонок завершён';
+      // Закрываем соединение и чистим ресурсы
       hangupCall();
       return;
     }
@@ -409,6 +415,12 @@ async function rejectCall() {
 }
 
 async function hangupCall() {
+  // Остановить воспроизведение удалённого аудио, если есть
+  const remoteAudio = document.getElementById('remote-audio');
+  if (remoteAudio) {
+    remoteAudio.srcObject = null;
+    remoteAudio.pause();
+  }
   if (peerConnection) {
     peerConnection.close();
     peerConnection = null;
