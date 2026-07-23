@@ -9,7 +9,6 @@ const firebaseConfig = {
   measurementId: "G-87QPL1SK7N"
 };
 
-
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
@@ -19,6 +18,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // DOM-элементы
+const splashScreen = document.getElementById('splash-screen');
 const authScreen = document.getElementById('auth-screen');
 const chatScreen = document.getElementById('chat-screen');
 const authForm = document.getElementById('auth-form');
@@ -44,6 +44,7 @@ const avatarInput = document.getElementById('avatar-input');
 const saveProfileBtn = document.getElementById('save-profile');
 const closeModalBtn = document.getElementById('close-modal');
 const sidebarAvatar = document.getElementById('sidebar-avatar');
+const selfStatusDot = document.getElementById('self-status-dot');
 const currentUserNickname = document.getElementById('current-user-nickname');
 const emojiBtn = document.getElementById('emoji-btn');
 const emojiPanel = document.getElementById('emoji-panel');
@@ -53,6 +54,8 @@ const animationSelect = document.getElementById('animation-select');
 const saveSettingsBtn = document.getElementById('save-settings');
 const closeSettingsBtn = document.getElementById('close-settings');
 const mainChat = document.getElementById('main-chat');
+const sidebar = document.getElementById('sidebar');
+const sidebarScrim = document.getElementById('sidebar-scrim');
 
 let currentUser = null;
 let currentUserData = { nickname: '', avatarUrl: '', animation: 'none' };
@@ -60,6 +63,19 @@ let activeChatId = 'general';
 let unsubscribeMessages = null;
 let isLoginMode = true;
 let animationInterval = null;
+let presenceInterval = null;
+const userStatusListeners = new Map(); // uid -> unsubscribe
+
+// ============ Splash screen ============
+// Показывается минимум ~1.3с, скрывается как только известно состояние авторизации
+let splashMinTimeDone = false;
+let authStateKnown = false;
+function maybeHideSplash() {
+  if (splashMinTimeDone && authStateKnown) {
+    splashScreen.classList.add('hidden');
+  }
+}
+setTimeout(() => { splashMinTimeDone = true; maybeHideSplash(); }, 1300);
 
 // Вспомогательные функции
 function showScreen(screen) {
@@ -82,6 +98,7 @@ function linkify(text) {
   const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
   return text.replace(urlRegex, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
 }
+const DEFAULT_AVATAR = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ccircle cx="50" cy="50" r="50" fill="%23343450"/%3E%3C/svg%3E';
 
 function setLoginMode(mode) {
   isLoginMode = mode;
@@ -103,7 +120,7 @@ function setLoginMode(mode) {
 // Аутентификация
 async function registerUser(email, password, nickname) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
-  await setDoc(doc(db, 'users', cred.user.uid), { nickname, email, avatarUrl: '', animation: 'none', createdAt: serverTimestamp() });
+  await setDoc(doc(db, 'users', cred.user.uid), { nickname, email, avatarUrl: '', animation: 'none', online: true, createdAt: serverTimestamp() });
   return cred.user;
 }
 async function loginUser(email, password) {
@@ -113,7 +130,7 @@ async function loginUser(email, password) {
 async function loadUserData(uid) {
   const snap = await getDoc(doc(db, 'users', uid));
   if (snap.exists()) return snap.data();
-  const def = { nickname: 'Пользователь', email: '', avatarUrl: '', animation: 'none' };
+  const def = { nickname: 'Пользователь', email: '', avatarUrl: '', animation: 'none', online: true };
   await setDoc(doc(db, 'users', uid), def);
   return def;
 }
@@ -155,6 +172,41 @@ function compressImage(file, maxW=200, maxH=200) {
   });
 }
 
+// ============ Присутствие (online) ============
+function ensureUserStatusListener(uid) {
+  if (!uid || userStatusListeners.has(uid)) return;
+  const unsub = onSnapshot(doc(db, 'users', uid), snap => {
+    const isOnline = snap.exists() && snap.data().online === true;
+    document.querySelectorAll(`.status-dot[data-uid="${uid}"]`).forEach(dot => {
+      dot.classList.toggle('online', isOnline);
+    });
+  });
+  userStatusListeners.set(uid, unsub);
+}
+function clearUserStatusListeners() {
+  userStatusListeners.forEach(unsub => unsub());
+  userStatusListeners.clear();
+}
+async function setOnline(state) {
+  if (!currentUser) return;
+  try { await updateDoc(doc(db, 'users', currentUser.uid), { online: state, lastActive: serverTimestamp() }); }
+  catch (e) { /* нет соединения — не критично */ }
+}
+function startPresenceHeartbeat() {
+  stopPresenceHeartbeat();
+  setOnline(true);
+  presenceInterval = setInterval(() => { if (!document.hidden) setOnline(true); }, 25000);
+}
+function stopPresenceHeartbeat() {
+  if (presenceInterval) { clearInterval(presenceInterval); presenceInterval = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!currentUser) return;
+  if (document.hidden) setOnline(false);
+  else setOnline(true);
+});
+window.addEventListener('beforeunload', () => { setOnline(false); });
+
 // Чат
 function subscribeToMessages(chatId) {
   if (unsubscribeMessages) { unsubscribeMessages(); unsubscribeMessages = null; }
@@ -174,10 +226,17 @@ function addMessageToUI(id, data) {
   msgEl.id = `msg-${id}`;
   msgEl.className = `message ${isOwn ? 'own' : 'other'}`;
 
+  const avatarWrap = document.createElement('div');
+  avatarWrap.className = 'message-avatar-wrap avatar-wrap';
   const avatarImg = document.createElement('img');
   avatarImg.className = 'message-avatar';
-  avatarImg.src = data.userAvatarUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ccircle cx="50" cy="50" r="50" fill="%23444"/%3E%3C/svg%3E';
+  avatarImg.src = data.userAvatarUrl || DEFAULT_AVATAR;
   avatarImg.alt = 'avatar';
+  const statusDot = document.createElement('span');
+  statusDot.className = 'status-dot';
+  if (data.userId) statusDot.dataset.uid = data.userId;
+  avatarWrap.appendChild(avatarImg);
+  avatarWrap.appendChild(statusDot);
 
   const body = document.createElement('div');
   body.className = 'message-body';
@@ -190,9 +249,11 @@ function addMessageToUI(id, data) {
   body.appendChild(header);
   body.appendChild(bubble);
 
-  msgEl.appendChild(avatarImg);
+  msgEl.appendChild(avatarWrap);
   msgEl.appendChild(body);
   messagesList.appendChild(msgEl);
+
+  if (data.userId) ensureUserStatusListener(data.userId);
 }
 async function sendMessage(text) {
   if (!currentUser || !currentUserData) return;
@@ -311,15 +372,17 @@ authForm.addEventListener('submit', async (e) => {
 loginBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
 registerBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
 switchLink.addEventListener('click', e=>{ e.preventDefault(); clearAuthError(); setLoginMode(false); });
-logoutBtn.addEventListener('click', async ()=>{ 
-  if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;} 
+logoutBtn.addEventListener('click', async ()=>{
+  if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
   clearAnimation();
-  await signOut(auth); 
+  stopPresenceHeartbeat();
+  await setOnline(false);
+  await signOut(auth);
 });
 messageForm.addEventListener('submit', e=>{ e.preventDefault(); sendMessage(messageInput.value); });
 profileBtn.addEventListener('click', ()=>{
   profileNickname.value = currentUserData.nickname || '';
-  profileAvatarPreview.src = currentUserData.avatarUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ccircle cx="50" cy="50" r="50" fill="%23444"/%3E%3C/svg%3E';
+  profileAvatarPreview.src = currentUserData.avatarUrl || DEFAULT_AVATAR;
   profileModal.style.display = 'flex';
 });
 closeModalBtn.addEventListener('click', ()=> profileModal.style.display='none');
@@ -344,30 +407,46 @@ document.getElementById('chat-list').addEventListener('click', e=>{
   const name = item.querySelector('.chat-name').textContent;
   if(activeChatId!==id) { activeChatId=id; document.getElementById('current-chat-title').textContent=name; subscribeToMessages(id); }
   document.querySelectorAll('.chat-item').forEach(i=>i.classList.toggle('active', i.dataset.chatId===id));
-  if(window.innerWidth<=768) document.getElementById('sidebar').classList.remove('open');
+  if(window.innerWidth<=768) closeMobileSidebar();
 });
 
 // Мобильное меню
-document.getElementById('menu-toggle').addEventListener('click', ()=> document.getElementById('sidebar').classList.add('open'));
-document.getElementById('close-sidebar').addEventListener('click', ()=> document.getElementById('sidebar').classList.remove('open'));
+function openMobileSidebar() {
+  sidebar.classList.add('open');
+  sidebarScrim.classList.add('show');
+}
+function closeMobileSidebar() {
+  sidebar.classList.remove('open');
+  sidebarScrim.classList.remove('show');
+}
+document.getElementById('menu-toggle').addEventListener('click', openMobileSidebar);
+document.getElementById('close-sidebar').addEventListener('click', closeMobileSidebar);
+sidebarScrim.addEventListener('click', closeMobileSidebar);
 
 // Слежение за авторизацией
 onAuthStateChanged(auth, async user => {
+  authStateKnown = true;
   if (user) {
     currentUser = user;
     currentUserData = await loadUserData(user.uid);
     updateSidebarProfile();
+    if (selfStatusDot) selfStatusDot.classList.add('online');
     showScreen(chatScreen);
     subscribeToMessages(activeChatId);
     applyCurrentAnimation();
+    startPresenceHeartbeat();
   } else {
     currentUser=null; currentUserData={nickname:'',avatarUrl:'',animation:'none'};
     if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
     clearAnimation();
+    stopPresenceHeartbeat();
+    clearUserStatusListeners();
+    closeMobileSidebar();
     messagesList.innerHTML='';
     showScreen(authScreen);
     emailInput.value=''; passwordInput.value=''; nicknameInput.value='';
     clearAuthError(); setLoginMode(true);
   }
+  maybeHideSplash();
 });
 setLoginMode(true);

@@ -2,22 +2,63 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web Messenger</title>
-  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Искра — мессенджер</title>
+
+  <!-- Favicon: встроенная inline SVG-иконка (без внешних файлов) -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c6cff'/%3E%3Cstop offset='1' stop-color='%234f7cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='%230f0f1c'/%3E%3Cpath d='M50 14c20 0 35 14 35 30s-15 30-35 30c-4.2 0-8.2-.6-11.9-1.7L20 78l3.6-14.3C15 57 9 49 9 44c0-16 15-30 35-30z' fill='url(%23g)'/%3E%3Cpath d='M53 26 39 50h9l-2.5 17 17-25h-9l3.5-16z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c6cff'/%3E%3Cstop offset='1' stop-color='%234f7cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='%230f0f1c'/%3E%3Cpath d='M50 14c20 0 35 14 35 30s-15 30-35 30c-4.2 0-8.2-.6-11.9-1.7L20 78l3.6-14.3C15 57 9 49 9 44c0-16 15-30 35-30z' fill='url(%23g)'/%3E%3Cpath d='M53 26 39 50h9l-2.5 17 17-25h-9l3.5-16z' fill='%23fff'/%3E%3C/svg%3E">
+  <meta name="theme-color" content="#0f0f1c">
+  <link rel="manifest" href="manifest.json">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
+
+  <!-- Splash screen -->
+  <div id="splash-screen" class="splash">
+    <div class="splash-orb"></div>
+    <div class="splash-content">
+      <div class="splash-logo">
+        <svg viewBox="0 0 100 100" width="64" height="64">
+          <defs>
+            <linearGradient id="splashGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#9d8bff"/>
+              <stop offset="1" stop-color="#5b8cff"/>
+            </linearGradient>
+          </defs>
+          <path d="M50 14c20 0 35 14 35 30s-15 30-35 30c-4.2 0-8.2-.6-11.9-1.7L20 78l3.6-14.3C15 57 9 49 9 44c0-16 15-30 35-30z" fill="url(#splashGrad)"/>
+          <path d="M53 26 39 50h9l-2.5 17 17-25h-9l3.5-16z" fill="#fff"/>
+        </svg>
+      </div>
+      <h1 class="splash-title">Искра</h1>
+      <p class="splash-tagline">Мгновенно. Просто. Твоё.</p>
+    </div>
+  </div>
+
   <div id="app">
     <!-- Экран авторизации -->
-    <div id="auth-screen" class="screen active">
+    <div id="auth-screen" class="screen">
+      <div class="auth-bg-mesh"></div>
       <div class="auth-container">
         <div class="auth-header">
-          <h1>Messenger</h1>
-          <p class="auth-subtitle">Общайтесь с друзьями</p>
+          <div class="auth-logo">
+            <svg viewBox="0 0 100 100" width="40" height="40">
+              <defs>
+                <linearGradient id="authGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#9d8bff"/>
+                  <stop offset="1" stop-color="#5b8cff"/>
+                </linearGradient>
+              </defs>
+              <path d="M50 14c20 0 35 14 35 30s-15 30-35 30c-4.2 0-8.2-.6-11.9-1.7L20 78l3.6-14.3C15 57 9 49 9 44c0-16 15-30 35-30z" fill="url(#authGrad)"/>
+              <path d="M53 26 39 50h9l-2.5 17 17-25h-9l3.5-16z" fill="#fff"/>
+            </svg>
+          </div>
+          <h1>Искра</h1>
+          <p class="auth-subtitle">Общайтесь с друзьями в реальном времени</p>
         </div>
         <form id="auth-form" class="auth-form">
           <div class="form-group" id="nickname-group" style="display:none">
@@ -26,11 +67,11 @@
           </div>
           <div class="form-group">
             <label for="email">Email</label>
-            <input type="email" id="email" placeholder="Введите email" autocomplete="email">
+            <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
           </div>
           <div class="form-group">
             <label for="password">Пароль</label>
-            <input type="password" id="password" placeholder="Введите пароль" autocomplete="current-password">
+            <input type="password" id="password" placeholder="Минимум 6 символов" autocomplete="current-password">
           </div>
           <div class="auth-error" id="auth-error"></div>
           <div class="auth-buttons">
@@ -47,25 +88,44 @@
     <!-- Экран чата -->
     <div id="chat-screen" class="screen">
       <div class="chat-layout">
+        <div class="sidebar-scrim" id="sidebar-scrim"></div>
         <aside class="sidebar" id="sidebar">
           <div class="sidebar-header">
-            <h2>Чаты</h2>
-            <button id="close-sidebar" class="icon-btn">✕</button>
+            <div class="brand">
+              <svg viewBox="0 0 100 100" width="26" height="26">
+                <defs>
+                  <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stop-color="#9d8bff"/>
+                    <stop offset="1" stop-color="#5b8cff"/>
+                  </linearGradient>
+                </defs>
+                <path d="M50 14c20 0 35 14 35 30s-15 30-35 30c-4.2 0-8.2-.6-11.9-1.7L20 78l3.6-14.3C15 57 9 49 9 44c0-16 15-30 35-30z" fill="url(#brandGrad)"/>
+                <path d="M53 26 39 50h9l-2.5 17 17-25h-9l3.5-16z" fill="#fff"/>
+              </svg>
+              <h2>Искра</h2>
+            </div>
+            <button id="close-sidebar" class="icon-btn" aria-label="Закрыть меню">✕</button>
           </div>
           <ul class="chat-list" id="chat-list">
             <li class="chat-item active" data-chat-id="general">
               <span class="chat-icon">💬</span>
-              <span class="chat-name">Общий чат</span>
+              <div class="chat-item-text">
+                <span class="chat-name">Общий чат</span>
+                <span class="chat-preview">Все на связи</span>
+              </div>
             </li>
           </ul>
           <div class="sidebar-footer">
             <div class="user-info" id="user-info">
-              <img id="sidebar-avatar" class="avatar-small" src="" alt="avatar" style="display:none">
+              <div class="avatar-wrap">
+                <img id="sidebar-avatar" class="avatar-small" src="" alt="avatar" style="display:none">
+                <span class="status-dot online" id="self-status-dot"></span>
+              </div>
               <span id="current-user-nickname"></span>
             </div>
             <div class="sidebar-actions">
               <button id="profile-btn" class="btn btn-profile">Профиль</button>
-              <button id="settings-btn" class="btn btn-profile" title="Настройки">⚙️</button>
+              <button id="settings-btn" class="btn btn-icon-profile" title="Настройки" aria-label="Настройки">⚙️</button>
             </div>
             <button id="logout-btn" class="btn btn-logout">Выйти</button>
           </div>
@@ -73,19 +133,24 @@
 
         <main class="main-chat" id="main-chat">
           <header class="chat-header">
-            <button id="menu-toggle" class="icon-btn hamburger">☰</button>
-            <h3 id="current-chat-title">Общий чат</h3>
+            <button id="menu-toggle" class="icon-btn hamburger" aria-label="Открыть меню">☰</button>
+            <div class="chat-header-info">
+              <h3 id="current-chat-title">Общий чат</h3>
+              <span class="chat-header-sub">в сети сейчас</span>
+            </div>
           </header>
           <div class="messages-container" id="messages-container">
             <div class="messages-list" id="messages-list"></div>
           </div>
           <form class="message-form" id="message-form">
             <div class="input-wrapper">
-              <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off" required>
-              <button type="button" id="emoji-btn" class="icon-btn emoji-btn">😊</button>
+              <input type="text" id="message-input" placeholder="Написать сообщение…" autocomplete="off" required>
+              <button type="button" id="emoji-btn" class="icon-btn emoji-btn" aria-label="Эмодзи">😊</button>
               <div class="emoji-panel" id="emoji-panel" style="display:none"></div>
             </div>
-            <button type="submit" class="btn btn-send">Отправить</button>
+            <button type="submit" class="btn btn-send" aria-label="Отправить">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M3 11.5 20.5 3 12 20.5l-2.4-7.1L3 11.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
+            </button>
           </form>
         </main>
       </div>
