@@ -65,6 +65,10 @@
             <label for="nickname">Никнейм</label>
             <input type="text" id="nickname" placeholder="Придумайте имя" autocomplete="off">
           </div>
+          <div class="form-group" id="reg-phone-group" style="display:none">
+            <label for="reg-phone">Номер телефона (необязательно)</label>
+            <input type="tel" id="reg-phone" placeholder="+7 900 000-00-00" autocomplete="tel">
+          </div>
           <div class="form-group">
             <label for="email">Email</label>
             <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
@@ -104,7 +108,10 @@
               </svg>
               <h2>Искра</h2>
             </div>
-            <button id="close-sidebar" class="icon-btn" aria-label="Закрыть меню">✕</button>
+            <div class="sidebar-header-actions">
+              <button id="new-chat-btn" class="icon-btn" title="Новый чат" aria-label="Новый чат">＋</button>
+              <button id="close-sidebar" class="icon-btn" aria-label="Закрыть меню">✕</button>
+            </div>
           </div>
           <ul class="chat-list" id="chat-list">
             <li class="chat-item active" data-chat-id="general">
@@ -112,6 +119,13 @@
               <div class="chat-item-text">
                 <span class="chat-name">Общий чат</span>
                 <span class="chat-preview">Все на связи</span>
+              </div>
+            </li>
+            <li class="chat-item" data-chat-id="support">
+              <span class="chat-icon">🛟</span>
+              <div class="chat-item-text">
+                <span class="chat-name">Чат поддержки</span>
+                <span class="chat-preview">Мы всегда на связи</span>
               </div>
             </li>
           </ul>
@@ -134,9 +148,13 @@
         <main class="main-chat" id="main-chat">
           <header class="chat-header">
             <button id="menu-toggle" class="icon-btn hamburger" aria-label="Открыть меню">☰</button>
+            <div class="avatar-wrap" id="chat-header-avatar-wrap" style="display:none">
+              <img id="chat-header-avatar" class="avatar-small" src="" alt="">
+              <span class="status-dot" id="chat-header-status-dot"></span>
+            </div>
             <div class="chat-header-info">
               <h3 id="current-chat-title">Общий чат</h3>
-              <span class="chat-header-sub">в сети сейчас</span>
+              <span class="chat-header-sub" id="chat-header-sub">в сети сейчас</span>
             </div>
           </header>
           <div class="messages-container" id="messages-container">
@@ -169,9 +187,47 @@
           <label for="profile-nickname">Никнейм</label>
           <input type="text" id="profile-nickname">
         </div>
+        <div class="form-group">
+          <label for="profile-phone">Номер телефона (необязательно)</label>
+          <input type="tel" id="profile-phone" placeholder="+7 900 000-00-00">
+        </div>
         <div class="modal-buttons">
           <button id="save-profile" class="btn btn-primary">Сохранить</button>
           <button id="close-modal" class="btn btn-secondary">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Модальное окно нового чата -->
+    <div id="new-chat-modal" class="modal" style="display:none">
+      <div class="modal-content modal-content-wide">
+        <h3>Новый чат</h3>
+        <div class="mode-toggle">
+          <button type="button" class="mode-btn active" id="mode-private" data-mode="private">Личный чат</button>
+          <button type="button" class="mode-btn" id="mode-group" data-mode="group">Группа</button>
+        </div>
+
+        <div class="form-group" id="group-name-group" style="display:none">
+          <label for="group-name-input">Название группы</label>
+          <input type="text" id="group-name-input" placeholder="Например, «Друзья»">
+        </div>
+
+        <div class="form-group full-width">
+          <label for="user-search-input">Никнейм, email или телефон</label>
+          <div class="search-row">
+            <input type="text" id="user-search-input" placeholder="Введите точный никнейм, email или телефон" autocomplete="off">
+            <button type="button" id="user-search-btn" class="btn btn-primary btn-compact">Найти</button>
+          </div>
+        </div>
+
+        <div id="staged-members" class="staged-members"></div>
+
+        <div id="search-results" class="search-results"></div>
+        <div class="search-hint" id="search-hint">Введите точное совпадение никнейма, email или номера телефона собеседника.</div>
+
+        <div class="modal-buttons">
+          <button id="create-group-btn" class="btn btn-primary" style="display:none">Создать группу</button>
+          <button id="close-new-chat" class="btn btn-secondary">Отмена</button>
         </div>
       </div>
     </div>

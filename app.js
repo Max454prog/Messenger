@@ -11,7 +11,7 @@ const firebaseConfig = {
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, getDocs, updateDoc } from 'firebase/firestore';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -24,6 +24,8 @@ const chatScreen = document.getElementById('chat-screen');
 const authForm = document.getElementById('auth-form');
 const nicknameGroup = document.getElementById('nickname-group');
 const nicknameInput = document.getElementById('nickname');
+const regPhoneGroup = document.getElementById('reg-phone-group');
+const regPhoneInput = document.getElementById('reg-phone');
 const emailInput = document.getElementById('email');
 const passwordInput = document.getElementById('password');
 const authError = document.getElementById('auth-error');
@@ -39,6 +41,7 @@ const logoutBtn = document.getElementById('logout-btn');
 const profileBtn = document.getElementById('profile-btn');
 const profileModal = document.getElementById('profile-modal');
 const profileNickname = document.getElementById('profile-nickname');
+const profilePhone = document.getElementById('profile-phone');
 const profileAvatarPreview = document.getElementById('profile-avatar-preview');
 const avatarInput = document.getElementById('avatar-input');
 const saveProfileBtn = document.getElementById('save-profile');
@@ -56,6 +59,25 @@ const closeSettingsBtn = document.getElementById('close-settings');
 const mainChat = document.getElementById('main-chat');
 const sidebar = document.getElementById('sidebar');
 const sidebarScrim = document.getElementById('sidebar-scrim');
+const chatList = document.getElementById('chat-list');
+const currentChatTitle = document.getElementById('current-chat-title');
+const chatHeaderSub = document.getElementById('chat-header-sub');
+const chatHeaderAvatarWrap = document.getElementById('chat-header-avatar-wrap');
+const chatHeaderAvatar = document.getElementById('chat-header-avatar');
+const chatHeaderStatusDot = document.getElementById('chat-header-status-dot');
+const newChatBtn = document.getElementById('new-chat-btn');
+const newChatModal = document.getElementById('new-chat-modal');
+const closeNewChatBtn = document.getElementById('close-new-chat');
+const modePrivateBtn = document.getElementById('mode-private');
+const modeGroupBtn = document.getElementById('mode-group');
+const groupNameGroup = document.getElementById('group-name-group');
+const groupNameInput = document.getElementById('group-name-input');
+const userSearchInput = document.getElementById('user-search-input');
+const userSearchBtn = document.getElementById('user-search-btn');
+const searchResultsEl = document.getElementById('search-results');
+const searchHint = document.getElementById('search-hint');
+const stagedMembersEl = document.getElementById('staged-members');
+const createGroupBtn = document.getElementById('create-group-btn');
 
 let currentUser = null;
 let currentUserData = { nickname: '', avatarUrl: '', animation: 'none' };
@@ -65,6 +87,11 @@ let isLoginMode = true;
 let animationInterval = null;
 let presenceInterval = null;
 const userStatusListeners = new Map(); // uid -> unsubscribe
+let unsubscribeChatList = null;
+let unsubscribeHeaderPresence = null;
+let newChatMode = 'private'; // 'private' | 'group'
+let stagedMembers = []; // { uid, nickname, avatarUrl } — только для режима "группа"
+let lastSearchResults = []; // кэш последних результатов поиска пользователей
 
 // ============ Splash screen ============
 // Показывается минимум ~1.3с, скрывается как только известно состояние авторизации
@@ -104,13 +131,17 @@ function setLoginMode(mode) {
   isLoginMode = mode;
   if (mode) {
     nicknameGroup.style.display = 'none';
+    regPhoneGroup.style.display = 'none';
     loginBtn.style.display = 'inline-flex';
     registerBtn.style.display = 'none';
+    passwordInput.autocomplete = 'current-password';
     authToggle.innerHTML = 'Нет аккаунта? <a href="#" id="switch-to-register">Создать</a>';
   } else {
     nicknameGroup.style.display = 'block';
+    regPhoneGroup.style.display = 'block';
     loginBtn.style.display = 'none';
     registerBtn.style.display = 'inline-flex';
+    passwordInput.autocomplete = 'new-password';
     authToggle.innerHTML = 'Уже есть аккаунт? <a href="#" id="switch-to-login">Войти</a>';
   }
   const newLink = document.querySelector('#auth-toggle a');
@@ -118,9 +149,9 @@ function setLoginMode(mode) {
 }
 
 // Аутентификация
-async function registerUser(email, password, nickname) {
+async function registerUser(email, password, nickname, phone) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
-  await setDoc(doc(db, 'users', cred.user.uid), { nickname, email, avatarUrl: '', animation: 'none', online: true, createdAt: serverTimestamp() });
+  await setDoc(doc(db, 'users', cred.user.uid), { nickname, email, phone: phone || '', avatarUrl: '', animation: 'none', online: true, phoneReminderSent: !!phone, createdAt: serverTimestamp() });
   return cred.user;
 }
 async function loginUser(email, password) {
@@ -130,17 +161,18 @@ async function loginUser(email, password) {
 async function loadUserData(uid) {
   const snap = await getDoc(doc(db, 'users', uid));
   if (snap.exists()) return snap.data();
-  const def = { nickname: 'Пользователь', email: '', avatarUrl: '', animation: 'none', online: true };
+  const def = { nickname: 'Пользователь', email: '', phone: '', avatarUrl: '', animation: 'none', online: true, phoneReminderSent: false };
   await setDoc(doc(db, 'users', uid), def);
   return def;
 }
 
 // Профиль и аватар
-async function updateProfile(nickname, avatarUrl) {
+async function updateProfile(nickname, avatarUrl, phone) {
   if (!currentUser) return;
-  await updateDoc(doc(db, 'users', currentUser.uid), { nickname, avatarUrl });
+  await updateDoc(doc(db, 'users', currentUser.uid), { nickname, avatarUrl, phone: phone || '' });
   currentUserData.nickname = nickname;
   currentUserData.avatarUrl = avatarUrl;
+  currentUserData.phone = phone || '';
   updateSidebarProfile();
 }
 function updateSidebarProfile() {
@@ -170,6 +202,25 @@ function compressImage(file, maxW=200, maxH=200) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+// Напоминание про телефон для тех, кто зарегистрировался ещё до появления этого поля.
+// Отправляется один раз в "Чат поддержки" и больше не повторяется (флаг phoneReminderSent).
+async function maybeSendPhoneReminder(uid, data) {
+  if (data.phone || data.phoneReminderSent) return;
+  try {
+    await addDoc(collection(db, 'messages'), {
+      text: `${data.nickname || 'Пользователь'}, добавьте, пожалуйста, номер телефона в профиле — это нужно для полной регистрации в мессенджере.`,
+      userId: uid,
+      userName: 'Чат поддержки',
+      userAvatarUrl: '',
+      chatId: 'support',
+      system: true,
+      timestamp: serverTimestamp()
+    });
+    await updateDoc(doc(db, 'users', uid), { phoneReminderSent: true });
+    currentUserData.phoneReminderSent = true;
+  } catch (e) { /* не критично, если напоминание не отправилось — попробуем в другой раз */ }
 }
 
 // ============ Присутствие (online) ============
@@ -207,20 +258,278 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('beforeunload', () => { setOnline(false); });
 
+// ============ Личные и групповые чаты ============
+function privateChatId(uidA, uidB) {
+  return 'priv_' + [uidA, uidB].sort().join('_');
+}
+
+// Поиск пользователей по точному совпадению никнейма, email или телефона
+async function searchUsers(term) {
+  const trimmed = term.trim();
+  if (!trimmed) return [];
+  const usersRef = collection(db, 'users');
+  const fields = ['nickname', 'email', 'phone'];
+  const found = new Map();
+  for (const field of fields) {
+    try {
+      const snap = await getDocs(query(usersRef, where(field, '==', trimmed)));
+      snap.forEach(d => {
+        if (d.id !== currentUser.uid && !found.has(d.id)) found.set(d.id, { uid: d.id, ...d.data() });
+      });
+    } catch (e) { /* поле может отсутствовать у части документов — пропускаем */ }
+  }
+  return Array.from(found.values());
+}
+
+function renderSearchResults(results) {
+  lastSearchResults = results;
+  searchResultsEl.innerHTML = '';
+  if (results.length === 0) {
+    searchResultsEl.innerHTML = '<div class="search-empty">Никого не нашли. Проверьте правильность ввода.</div>';
+    return;
+  }
+  results.forEach(user => {
+    const alreadyStaged = stagedMembers.some(m => m.uid === user.uid);
+    const item = document.createElement('div');
+    item.className = 'search-result-item' + (newChatMode === 'group' && alreadyStaged ? ' added' : '');
+    item.innerHTML = `
+      <img class="avatar-small" src="${user.avatarUrl || DEFAULT_AVATAR}" alt="">
+      <div class="search-result-info">
+        <span class="search-result-name">${user.nickname || 'Пользователь'}</span>
+        <span class="search-result-sub">${user.email || user.phone || ''}</span>
+      </div>`;
+    item.addEventListener('click', () => {
+      if (newChatMode === 'private') {
+        startPrivateChat(user);
+      } else {
+        addStagedMember(user);
+        renderSearchResults(lastSearchResults);
+      }
+    });
+    searchResultsEl.appendChild(item);
+  });
+}
+
+function addStagedMember(user) {
+  if (stagedMembers.some(m => m.uid === user.uid)) return;
+  stagedMembers.push(user);
+  renderStagedChips();
+}
+function removeStagedMember(uid) {
+  stagedMembers = stagedMembers.filter(m => m.uid !== uid);
+  renderStagedChips();
+  renderSearchResults(lastSearchResults);
+}
+function renderStagedChips() {
+  stagedMembersEl.innerHTML = '';
+  stagedMembers.forEach(user => {
+    const chip = document.createElement('div');
+    chip.className = 'staged-chip';
+    chip.innerHTML = `<img src="${user.avatarUrl || DEFAULT_AVATAR}" alt=""><span>${user.nickname || 'Пользователь'}</span>`;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => removeStagedMember(user.uid));
+    chip.appendChild(removeBtn);
+    stagedMembersEl.appendChild(chip);
+  });
+}
+
+async function startPrivateChat(otherUser) {
+  const chatId = privateChatId(currentUser.uid, otherUser.uid);
+  const chatRef = doc(db, 'chats', chatId);
+  const snap = await getDoc(chatRef);
+  if (!snap.exists()) {
+    await setDoc(chatRef, {
+      type: 'private',
+      members: [currentUser.uid, otherUser.uid],
+      memberInfo: {
+        [currentUser.uid]: { nickname: currentUserData.nickname || 'Пользователь', avatarUrl: currentUserData.avatarUrl || '' },
+        [otherUser.uid]: { nickname: otherUser.nickname || 'Пользователь', avatarUrl: otherUser.avatarUrl || '' }
+      },
+      createdBy: currentUser.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  }
+  selectChat(chatId, otherUser.nickname || 'Пользователь', { type: 'private', otherUid: otherUser.uid });
+  closeNewChatModal();
+}
+
+async function createGroupChat() {
+  if (stagedMembers.length === 0) return;
+  const name = groupNameInput.value.trim() || 'Новая группа';
+  const memberInfo = { [currentUser.uid]: { nickname: currentUserData.nickname || 'Пользователь', avatarUrl: currentUserData.avatarUrl || '' } };
+  stagedMembers.forEach(u => { memberInfo[u.uid] = { nickname: u.nickname || 'Пользователь', avatarUrl: u.avatarUrl || '' }; });
+  const membersArr = [currentUser.uid, ...stagedMembers.map(u => u.uid)];
+  const docRef = await addDoc(collection(db, 'chats'), {
+    type: 'group',
+    name,
+    members: membersArr,
+    memberInfo,
+    createdBy: currentUser.uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+  selectChat(docRef.id, name, { type: 'group', memberCount: membersArr.length });
+  closeNewChatModal();
+}
+
+function refreshActiveChatHighlight() {
+  document.querySelectorAll('.chat-item').forEach(i => i.classList.toggle('active', i.dataset.chatId === activeChatId));
+}
+
+function selectChat(chatId, title, meta) {
+  if (activeChatId === chatId) return;
+  activeChatId = chatId;
+  currentChatTitle.textContent = title;
+  subscribeToMessages(chatId);
+  updateChatHeaderMeta(meta || { type: 'general' });
+  refreshActiveChatHighlight();
+  if (window.innerWidth <= 768) closeMobileSidebar();
+}
+
+function updateChatHeaderMeta(meta) {
+  if (unsubscribeHeaderPresence) { unsubscribeHeaderPresence(); unsubscribeHeaderPresence = null; }
+  if (meta.type === 'private' && meta.otherUid) {
+    chatHeaderAvatarWrap.style.display = 'flex';
+    chatHeaderStatusDot.dataset.uid = meta.otherUid;
+    chatHeaderStatusDot.classList.remove('online');
+    unsubscribeHeaderPresence = onSnapshot(doc(db, 'users', meta.otherUid), snap => {
+      const data = snap.exists() ? snap.data() : {};
+      chatHeaderAvatar.src = data.avatarUrl || DEFAULT_AVATAR;
+      const isOnline = data.online === true;
+      chatHeaderStatusDot.classList.toggle('online', isOnline);
+      chatHeaderSub.textContent = isOnline ? 'в сети' : 'не в сети';
+      chatHeaderSub.classList.toggle('offline', !isOnline);
+    });
+  } else if (meta.type === 'group') {
+    chatHeaderAvatarWrap.style.display = 'none';
+    chatHeaderSub.textContent = `${meta.memberCount || ''} участник(ов)`.trim();
+    chatHeaderSub.classList.remove('offline');
+  } else {
+    chatHeaderAvatarWrap.style.display = 'none';
+    chatHeaderSub.textContent = meta.subtitle || 'Открытый чат для всех';
+    chatHeaderSub.classList.remove('offline');
+  }
+}
+
+function subscribeToChatList() {
+  if (unsubscribeChatList) { unsubscribeChatList(); unsubscribeChatList = null; }
+  const qRef = query(collection(db, 'chats'), where('members', 'array-contains', currentUser.uid), orderBy('updatedAt', 'desc'));
+  unsubscribeChatList = onSnapshot(qRef, snap => {
+    chatList.querySelectorAll('.dynamic-chat-item').forEach(el => el.remove());
+    snap.forEach(docSnap => {
+      const data = docSnap.data();
+      chatList.appendChild(renderChatListItem(docSnap.id, data));
+    });
+    refreshActiveChatHighlight();
+  }, () => {
+    // Если не хватает составного индекса, Firestore выведет ссылку на его создание в консоли браузера.
+  });
+}
+
+function renderChatListItem(chatId, data) {
+  const li = document.createElement('li');
+  li.className = 'chat-item dynamic-chat-item';
+  li.dataset.chatId = chatId;
+  li.dataset.type = data.type;
+
+  let iconHtml, name, preview;
+  if (data.type === 'private') {
+    const otherUid = (data.members || []).find(m => m !== currentUser.uid);
+    const info = (data.memberInfo && data.memberInfo[otherUid]) || {};
+    li.dataset.otherUid = otherUid || '';
+    name = info.nickname || 'Пользователь';
+    preview = data.lastMessage?.text || 'Нет сообщений';
+    iconHtml = `<div class="avatar-wrap"><img class="chat-avatar" src="${info.avatarUrl || DEFAULT_AVATAR}" alt=""><span class="status-dot" data-uid="${otherUid || ''}"></span></div>`;
+    if (otherUid) ensureUserStatusListener(otherUid);
+  } else {
+    name = data.name || 'Группа';
+    preview = data.lastMessage?.text || `${(data.members || []).length} участников`;
+    li.dataset.memberCount = (data.members || []).length;
+    iconHtml = `<span class="chat-icon">👥</span>`;
+  }
+
+  li.innerHTML = `
+    ${iconHtml}
+    <div class="chat-item-text">
+      <span class="chat-name">${name}</span>
+      <span class="chat-preview">${preview}</span>
+    </div>`;
+  return li;
+}
+
+// Модальное окно "Новый чат"
+function setNewChatMode(mode) {
+  newChatMode = mode;
+  modePrivateBtn.classList.toggle('active', mode === 'private');
+  modeGroupBtn.classList.toggle('active', mode === 'group');
+  groupNameGroup.style.display = mode === 'group' ? 'block' : 'none';
+  createGroupBtn.style.display = mode === 'group' ? 'inline-flex' : 'none';
+  stagedMembersEl.style.display = mode === 'group' ? 'flex' : 'none';
+  searchHint.textContent = mode === 'private'
+    ? 'Введите точное совпадение никнейма, email или номера телефона собеседника.'
+    : 'Найдите и добавьте участников будущей группы, затем нажмите «Создать группу».';
+}
+function openNewChatModal() {
+  setNewChatMode('private');
+  stagedMembers = [];
+  renderStagedChips();
+  userSearchInput.value = '';
+  searchResultsEl.innerHTML = '';
+  groupNameInput.value = '';
+  newChatModal.style.display = 'flex';
+}
+function closeNewChatModal() {
+  newChatModal.style.display = 'none';
+}
+modePrivateBtn.addEventListener('click', () => setNewChatMode('private'));
+modeGroupBtn.addEventListener('click', () => setNewChatMode('group'));
+newChatBtn.addEventListener('click', openNewChatModal);
+closeNewChatBtn.addEventListener('click', closeNewChatModal);
+userSearchBtn.addEventListener('click', async () => {
+  const results = await searchUsers(userSearchInput.value);
+  renderSearchResults(results);
+});
+userSearchInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); userSearchBtn.click(); }
+});
+createGroupBtn.addEventListener('click', createGroupChat);
+
 // Чат
 function subscribeToMessages(chatId) {
   if (unsubscribeMessages) { unsubscribeMessages(); unsubscribeMessages = null; }
   messagesList.innerHTML = '';
+  let firstBatch = true;
   const qRef = query(collection(db, 'messages'), where('chatId','==',chatId), orderBy('timestamp','asc'));
   unsubscribeMessages = onSnapshot(qRef, snap => {
+    const wasAtBottom = isScrolledToBottom();
+    let added = false;
     snap.docChanges().forEach(change => {
-      if (change.type === 'added') addMessageToUI(change.doc.id, change.doc.data());
+      if (change.type === 'added') { addMessageToUI(change.doc.id, change.doc.data()); added = true; }
     });
-    if (isScrolledToBottom() || snap.docChanges().some(c => c.type==='added')) scrollToBottom();
+    if (added && (firstBatch || wasAtBottom)) scrollToBottom();
+    firstBatch = false;
   });
 }
 function addMessageToUI(id, data) {
   if (document.getElementById(`msg-${id}`)) return;
+
+  // Системные сообщения (например, напоминание из "Чата поддержки") показываем
+  // отдельной центрированной плашкой, без аватара и деления на "своё/чужое".
+  if (data.system) {
+    const sysEl = document.createElement('div');
+    sysEl.id = `msg-${id}`;
+    sysEl.className = 'message system-message';
+    const bubble = document.createElement('div');
+    bubble.className = 'system-bubble';
+    bubble.innerHTML = linkify(data.text);
+    sysEl.appendChild(bubble);
+    messagesList.appendChild(sysEl);
+    return;
+  }
+
   const isOwn = currentUser && data.userId === currentUser.uid;
   const msgEl = document.createElement('div');
   msgEl.id = `msg-${id}`;
@@ -268,6 +577,14 @@ async function sendMessage(text) {
     timestamp: serverTimestamp()
   });
   messageInput.value = '';
+  if (activeChatId !== 'general') {
+    try {
+      await updateDoc(doc(db, 'chats', activeChatId), {
+        lastMessage: { text: trimmed, senderId: currentUser.uid, timestamp: serverTimestamp() },
+        updatedAt: serverTimestamp()
+      });
+    } catch (e) { /* не критично для отправки самого сообщения */ }
+  }
 }
 
 // Эмодзи
@@ -355,10 +672,11 @@ authForm.addEventListener('submit', async (e) => {
   const email = emailInput.value.trim();
   const password = passwordInput.value.trim();
   const nickname = nicknameInput.value.trim();
+  const regPhone = regPhoneInput.value.trim();
   if (!email||!password) return displayAuthError('Введите email и пароль');
   if (!isLoginMode && !nickname) return displayAuthError('Придумайте никнейм');
   try {
-    isLoginMode ? await loginUser(email, password) : await registerUser(email, password, nickname);
+    isLoginMode ? await loginUser(email, password) : await registerUser(email, password, nickname, regPhone);
   } catch (err) {
     let msg='Ошибка'; if (err.code) {
       if (err.code.includes('email-already')) msg='Email занят';
@@ -369,8 +687,10 @@ authForm.addEventListener('submit', async (e) => {
     displayAuthError(msg);
   }
 });
-loginBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
-registerBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
+// Кнопки login-btn/register-btn уже type="submit" внутри формы — клик по ним и так
+// вызывает событие submit нативно, поэтому отдельные обработчики клика не нужны
+// (раньше они дублировали вызов authForm submit, из-за чего registerUser/loginUser
+// срабатывали дважды на одно нажатие).
 switchLink.addEventListener('click', e=>{ e.preventDefault(); clearAuthError(); setLoginMode(false); });
 logoutBtn.addEventListener('click', async ()=>{
   if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
@@ -382,6 +702,7 @@ logoutBtn.addEventListener('click', async ()=>{
 messageForm.addEventListener('submit', e=>{ e.preventDefault(); sendMessage(messageInput.value); });
 profileBtn.addEventListener('click', ()=>{
   profileNickname.value = currentUserData.nickname || '';
+  profilePhone.value = currentUserData.phone || '';
   profileAvatarPreview.src = currentUserData.avatarUrl || DEFAULT_AVATAR;
   profileModal.style.display = 'flex';
 });
@@ -395,18 +716,30 @@ avatarInput.addEventListener('change', async (e) => {
 saveProfileBtn.addEventListener('click', async ()=>{
   const newNick = profileNickname.value.trim() || currentUserData.nickname;
   const newAvatar = profileAvatarPreview.src;
-  await updateProfile(newNick, newAvatar);
+  const newPhone = profilePhone.value.trim();
+  await updateProfile(newNick, newAvatar, newPhone);
   profileModal.style.display = 'none';
 });
 
 // Переключение чата
-document.getElementById('chat-list').addEventListener('click', e=>{
+chatList.addEventListener('click', e=>{
   const item = e.target.closest('.chat-item');
   if(!item) return;
   const id = item.dataset.chatId;
   const name = item.querySelector('.chat-name').textContent;
-  if(activeChatId!==id) { activeChatId=id; document.getElementById('current-chat-title').textContent=name; subscribeToMessages(id); }
-  document.querySelectorAll('.chat-item').forEach(i=>i.classList.toggle('active', i.dataset.chatId===id));
+  const type = item.dataset.type || 'general';
+  const meta = type === 'private'
+    ? { type: 'private', otherUid: item.dataset.otherUid }
+    : type === 'group'
+      ? { type: 'group', memberCount: item.dataset.memberCount }
+      : { type: 'general', subtitle: id === 'support' ? 'Мы поможем с любым вопросом' : 'Открытый чат для всех' };
+  if (activeChatId !== id) {
+    activeChatId = id;
+    currentChatTitle.textContent = name;
+    subscribeToMessages(id);
+    updateChatHeaderMeta(meta);
+  }
+  refreshActiveChatHighlight();
   if(window.innerWidth<=768) closeMobileSidebar();
 });
 
@@ -433,20 +766,42 @@ onAuthStateChanged(auth, async user => {
     if (selfStatusDot) selfStatusDot.classList.add('online');
     showScreen(chatScreen);
     subscribeToMessages(activeChatId);
+    subscribeToChatList();
     applyCurrentAnimation();
     startPresenceHeartbeat();
+    maybeSendPhoneReminder(user.uid, currentUserData);
   } else {
     currentUser=null; currentUserData={nickname:'',avatarUrl:'',animation:'none'};
     if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
+    if(unsubscribeChatList){unsubscribeChatList();unsubscribeChatList=null;}
+    if(unsubscribeHeaderPresence){unsubscribeHeaderPresence();unsubscribeHeaderPresence=null;}
     clearAnimation();
     stopPresenceHeartbeat();
     clearUserStatusListeners();
     closeMobileSidebar();
+    chatList.querySelectorAll('.dynamic-chat-item').forEach(el => el.remove());
+    activeChatId = 'general';
+    currentChatTitle.textContent = 'Общий чат';
+    updateChatHeaderMeta({ type: 'general' });
+    document.querySelectorAll('.chat-item').forEach(i=>i.classList.toggle('active', i.dataset.chatId==='general'));
     messagesList.innerHTML='';
     showScreen(authScreen);
-    emailInput.value=''; passwordInput.value=''; nicknameInput.value='';
+    emailInput.value=''; passwordInput.value=''; nicknameInput.value=''; regPhoneInput.value='';
     clearAuthError(); setLoginMode(true);
   }
   maybeHideSplash();
 });
 setLoginMode(true);
+
+// ============ Регистрация Service Worker ============
+// Нужна для полноценной PWA-установки (кнопка "Установить" в браузере)
+// и быстрой офлайн-загрузки интерфейса. Работает только по https (или localhost).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {
+      // Если регистрация не удалась (например, страница открыта как file://),
+      // приложение продолжает работать в обычном режиме — просто без PWA-фич.
+    });
+  });
+}
+
