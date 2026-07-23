@@ -9,6 +9,7 @@ const firebaseConfig = {
   measurementId: "G-87QPL1SK7N"
 };
 
+
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
@@ -17,7 +18,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// DOM элементы
+// DOM-элементы
 const authScreen = document.getElementById('auth-screen');
 const chatScreen = document.getElementById('chat-screen');
 const authForm = document.getElementById('auth-form');
@@ -46,12 +47,19 @@ const sidebarAvatar = document.getElementById('sidebar-avatar');
 const currentUserNickname = document.getElementById('current-user-nickname');
 const emojiBtn = document.getElementById('emoji-btn');
 const emojiPanel = document.getElementById('emoji-panel');
+const settingsBtn = document.getElementById('settings-btn');
+const settingsModal = document.getElementById('settings-modal');
+const animationSelect = document.getElementById('animation-select');
+const saveSettingsBtn = document.getElementById('save-settings');
+const closeSettingsBtn = document.getElementById('close-settings');
+const mainChat = document.getElementById('main-chat');
 
 let currentUser = null;
-let currentUserData = { nickname: '', avatarUrl: '' };
+let currentUserData = { nickname: '', avatarUrl: '', animation: 'none' };
 let activeChatId = 'general';
 let unsubscribeMessages = null;
 let isLoginMode = true;
+let animationInterval = null;
 
 // Вспомогательные функции
 function showScreen(screen) {
@@ -70,6 +78,10 @@ function isScrolledToBottom() {
 function scrollToBottom() { messagesContainer.scrollTop = messagesContainer.scrollHeight; }
 function clearAuthError() { authError.textContent = ''; }
 function displayAuthError(msg) { authError.textContent = msg; }
+function linkify(text) {
+  const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+  return text.replace(urlRegex, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+}
 
 function setLoginMode(mode) {
   isLoginMode = mode;
@@ -91,7 +103,7 @@ function setLoginMode(mode) {
 // Аутентификация
 async function registerUser(email, password, nickname) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
-  await setDoc(doc(db, 'users', cred.user.uid), { nickname, email, avatarUrl: '', createdAt: serverTimestamp() });
+  await setDoc(doc(db, 'users', cred.user.uid), { nickname, email, avatarUrl: '', animation: 'none', createdAt: serverTimestamp() });
   return cred.user;
 }
 async function loginUser(email, password) {
@@ -101,7 +113,7 @@ async function loginUser(email, password) {
 async function loadUserData(uid) {
   const snap = await getDoc(doc(db, 'users', uid));
   if (snap.exists()) return snap.data();
-  const def = { nickname: 'Пользователь', email: '', avatarUrl: '' };
+  const def = { nickname: 'Пользователь', email: '', avatarUrl: '', animation: 'none' };
   await setDoc(doc(db, 'users', uid), def);
   return def;
 }
@@ -124,9 +136,9 @@ function updateSidebarProfile() {
   }
 }
 function compressImage(file, maxW=200, maxH=200) {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = e => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
@@ -174,7 +186,7 @@ function addMessageToUI(id, data) {
   header.innerHTML = `<span class="message-username">${data.userName || 'Пользователь'}</span><span class="message-time">${formatTime(data.timestamp)}</span>`;
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
-  bubble.textContent = data.text;
+  bubble.innerHTML = linkify(data.text);
   body.appendChild(header);
   body.appendChild(bubble);
 
@@ -219,7 +231,64 @@ emojiBtn.addEventListener('click', (e) => {
 });
 document.addEventListener('click', () => { emojiPanel.style.display = 'none'; });
 
-// Обработчики
+// Анимации фона
+function clearAnimation() {
+  const old = mainChat.querySelector('.animation-container');
+  if (old) old.remove();
+  if (animationInterval) clearInterval(animationInterval);
+}
+function startAnimation(type) {
+  clearAnimation();
+  if (type === 'none') return;
+  const container = document.createElement('div');
+  container.className = 'animation-container';
+  mainChat.appendChild(container);
+  const count = type === 'rain' ? 40 : 20;
+  for (let i = 0; i < count; i++) {
+    const particle = document.createElement('div');
+    particle.className = `particle ${type}`;
+    const left = Math.random() * 100;
+    const delay = Math.random() * 5;
+    const duration = 4 + Math.random() * 6;
+    particle.style.left = left + '%';
+    particle.style.animationDelay = delay + 's';
+    particle.style.animationDuration = duration + 's';
+    container.appendChild(particle);
+  }
+  // Периодически пересоздаём для бесконечности
+  animationInterval = setInterval(() => {
+    const container = mainChart.querySelector('.animation-container');
+    if (!container) return;
+    const newParticle = document.createElement('div');
+    newParticle.className = `particle ${type}`;
+    newParticle.style.left = Math.random() * 100 + '%';
+    newParticle.style.animationDelay = '0s';
+    newParticle.style.animationDuration = (4 + Math.random() * 6) + 's';
+    container.appendChild(newParticle);
+  }, 2000);
+}
+
+// Настройки
+async function applyCurrentAnimation() {
+  const anim = currentUserData.animation || 'none';
+  animationSelect.value = anim;
+  startAnimation(anim);
+}
+settingsBtn.addEventListener('click', () => {
+  animationSelect.value = currentUserData.animation || 'none';
+  settingsModal.style.display = 'flex';
+});
+closeSettingsBtn.addEventListener('click', () => settingsModal.style.display = 'none');
+saveSettingsBtn.addEventListener('click', async () => {
+  const newAnim = animationSelect.value;
+  if (!currentUser) return;
+  await updateDoc(doc(db, 'users', currentUser.uid), { animation: newAnim });
+  currentUserData.animation = newAnim;
+  startAnimation(newAnim);
+  settingsModal.style.display = 'none';
+});
+
+// Обработчики авторизации
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault(); clearAuthError();
   const email = emailInput.value.trim();
@@ -242,7 +311,11 @@ authForm.addEventListener('submit', async (e) => {
 loginBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
 registerBtn.addEventListener('click', ()=>authForm.dispatchEvent(new Event('submit')));
 switchLink.addEventListener('click', e=>{ e.preventDefault(); clearAuthError(); setLoginMode(false); });
-logoutBtn.addEventListener('click', async ()=>{ if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;} await signOut(auth); });
+logoutBtn.addEventListener('click', async ()=>{ 
+  if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;} 
+  clearAnimation();
+  await signOut(auth); 
+});
 messageForm.addEventListener('submit', e=>{ e.preventDefault(); sendMessage(messageInput.value); });
 profileBtn.addEventListener('click', ()=>{
   profileNickname.value = currentUserData.nickname || '';
@@ -286,9 +359,11 @@ onAuthStateChanged(auth, async user => {
     updateSidebarProfile();
     showScreen(chatScreen);
     subscribeToMessages(activeChatId);
+    applyCurrentAnimation();
   } else {
-    currentUser=null; currentUserData={nickname:'',avatarUrl:''};
+    currentUser=null; currentUserData={nickname:'',avatarUrl:'',animation:'none'};
     if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
+    clearAnimation();
     messagesList.innerHTML='';
     showScreen(authScreen);
     emailInput.value=''; passwordInput.value=''; nicknameInput.value='';

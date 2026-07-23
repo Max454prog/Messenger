@@ -4,10 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Web Messenger</title>
+  <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <div id="app">
@@ -62,12 +63,15 @@
               <img id="sidebar-avatar" class="avatar-small" src="" alt="avatar" style="display:none">
               <span id="current-user-nickname"></span>
             </div>
-            <button id="profile-btn" class="btn btn-profile">Профиль</button>
+            <div class="sidebar-actions">
+              <button id="profile-btn" class="btn btn-profile">Профиль</button>
+              <button id="settings-btn" class="btn btn-profile" title="Настройки">⚙️</button>
+            </div>
             <button id="logout-btn" class="btn btn-logout">Выйти</button>
           </div>
         </aside>
 
-        <main class="main-chat">
+        <main class="main-chat" id="main-chat">
           <header class="chat-header">
             <button id="menu-toggle" class="icon-btn hamburger">☰</button>
             <h3 id="current-chat-title">Общий чат</h3>
@@ -103,6 +107,26 @@
         <div class="modal-buttons">
           <button id="save-profile" class="btn btn-primary">Сохранить</button>
           <button id="close-modal" class="btn btn-secondary">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Модальное окно настроек -->
+    <div id="settings-modal" class="modal" style="display:none">
+      <div class="modal-content">
+        <h3>Настройки чата</h3>
+        <div class="form-group">
+          <label for="animation-select">Фоновая анимация</label>
+          <select id="animation-select">
+            <option value="none">Без анимации</option>
+            <option value="sakura">🌸 Сакура</option>
+            <option value="rain">🌧 Дождь</option>
+            <option value="leaves">🍂 Листья</option>
+          </select>
+        </div>
+        <div class="modal-buttons">
+          <button id="save-settings" class="btn btn-primary">Сохранить</button>
+          <button id="close-settings" class="btn btn-secondary">Отмена</button>
         </div>
       </div>
     </div>
