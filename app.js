@@ -257,7 +257,7 @@ function startAnimation(type) {
   }
   // Периодически пересоздаём для бесконечности
   animationInterval = setInterval(() => {
-    const container = mainChart.querySelector('.animation-container');
+    const container = mainChat.querySelector('.animation-container');
     if (!container) return;
     const newParticle = document.createElement('div');
     newParticle.className = `particle ${type}`;
