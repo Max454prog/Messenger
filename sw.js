@@ -39,17 +39,27 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.match(req).then(cached => {
-      const networkFetch = fetch(req)
-        .then(res => {
+      if (cached) {
+        // Есть в кеше — отдаём мгновенно, в фоне тихо обновляем кеш свежей версией.
+        fetch(req).then(res => {
           if (res && res.status === 200) {
-            const resClone = res.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(req, resClone));
+            caches.open(CACHE_NAME).then(cache => cache.put(req, res.clone()));
           }
-          return res;
-        })
-        .catch(() => cached);
-      // Сначала отдаём из кеша для мгновенной загрузки, попутно обновляя кеш из сети.
-      return cached || networkFetch;
+        }).catch(() => { /* офлайн — просто оставляем то, что уже в кеше */ });
+        return cached;
+      }
+      // БАГФИКС: раньше при промахе кеша И отсутствии сети код делал
+      // `.catch(() => cached)`, а `cached` в этой ветке всегда undefined —
+      // respondWith() получал undefined вместо Response и падал с ошибкой
+      // "Failed to convert value to 'Response'". Теперь просто идём в сеть
+      // и кешируем результат; если сети нет — ошибка сети дойдёт до браузера
+      // штатно (что и должно происходить для некешированного ресурса офлайн).
+      return fetch(req).then(res => {
+        if (res && res.status === 200) {
+          caches.open(CACHE_NAME).then(cache => cache.put(req, res.clone()));
+        }
+        return res;
+      });
     })
   );
 });

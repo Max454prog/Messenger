@@ -345,6 +345,13 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
   .messages-container { padding:16px; }
 }
 
+.local-notice {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+  background:var(--bg-elevated); border:1px solid var(--border-strong); color:var(--text-primary);
+  padding:12px 20px; border-radius:var(--radius-sm); box-shadow:var(--shadow-soft);
+  font-size:0.88rem; z-index:200; max-width:90%; text-align:center; animation:splashRise 0.25s cubic-bezier(.2,.8,.2,1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }
 }

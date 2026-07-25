@@ -169,9 +169,13 @@ async function loadUserData(uid) {
 // Профиль и аватар
 async function updateProfile(nickname, avatarUrl, phone) {
   if (!currentUser) return;
-  await updateDoc(doc(db, 'users', currentUser.uid), { nickname, avatarUrl, phone: phone || '' });
+  // БАГФИКС: раньше сюда могла попасть DEFAULT_AVATAR-заглушка (просто открыли
+  // профиль и нажали "Сохранить", не загружая фото) и навсегда прописывалась
+  // как "настоящий" аватар в Firestore. Явно отфильтровываем заглушку.
+  const cleanAvatar = (avatarUrl && avatarUrl !== DEFAULT_AVATAR) ? avatarUrl : '';
+  await updateDoc(doc(db, 'users', currentUser.uid), { nickname, avatarUrl: cleanAvatar, phone: phone || '' });
   currentUserData.nickname = nickname;
-  currentUserData.avatarUrl = avatarUrl;
+  currentUserData.avatarUrl = cleanAvatar;
   currentUserData.phone = phone || '';
   updateSidebarProfile();
 }
@@ -205,22 +209,23 @@ function compressImage(file, maxW=200, maxH=200) {
 }
 
 // Напоминание про телефон для тех, кто зарегистрировался ещё до появления этого поля.
-// Отправляется один раз в "Чат поддержки" и больше не повторяется (флаг phoneReminderSent).
-async function maybeSendPhoneReminder(uid, data) {
+// БАГФИКС: раньше это писалось как обычное сообщение в общий "Чат поддержки"
+// (chatId:'support' — один и тот же для ВСЕХ пользователей), из-за чего личное
+// напоминание конкретному человеку было видно вообще всем в общем чате.
+// Теперь это чисто локальный баннер в интерфейсе, ничего не пишем в Firestore
+// в общий чат — только помечаем флаг phoneReminderSent, чтобы не показывать повторно.
+function maybeSendPhoneReminder(uid, data) {
   if (data.phone || data.phoneReminderSent) return;
-  try {
-    await addDoc(collection(db, 'messages'), {
-      text: `${data.nickname || 'Пользователь'}, добавьте, пожалуйста, номер телефона в профиле — это нужно для полной регистрации в мессенджере.`,
-      userId: uid,
-      userName: 'Чат поддержки',
-      userAvatarUrl: '',
-      chatId: 'support',
-      system: true,
-      timestamp: serverTimestamp()
-    });
-    await updateDoc(doc(db, 'users', uid), { phoneReminderSent: true });
-    currentUserData.phoneReminderSent = true;
-  } catch (e) { /* не критично, если напоминание не отправилось — попробуем в другой раз */ }
+  showLocalNotice(`${data.nickname || 'Пользователь'}, добавьте, пожалуйста, номер телефона в профиле.`);
+  updateDoc(doc(db, 'users', uid), { phoneReminderSent: true }).catch(() => {});
+  currentUserData.phoneReminderSent = true;
+}
+function showLocalNotice(text) {
+  const notice = document.createElement('div');
+  notice.className = 'local-notice';
+  notice.textContent = text;
+  document.body.appendChild(notice);
+  setTimeout(() => notice.remove(), 6000);
 }
 
 // ============ Присутствие (online) ============
@@ -424,8 +429,11 @@ function subscribeToChatList() {
       chatList.appendChild(renderChatListItem(docSnap.id, data));
     });
     refreshActiveChatHighlight();
-  }, () => {
-    // Если не хватает составного индекса, Firestore выведет ссылку на его создание в консоли браузера.
+  }, (err) => {
+    // Если не хватает составного индекса, Firestore выдаёт ссылку на его создание —
+    // смотрите консоль браузера (F12). Без индекса список личных/групповых чатов
+    // молча не будет обновляться.
+    console.error('Ошибка подписки на список чатов (проверьте составной индекс Firestore: members array-contains + updatedAt desc):', err);
   });
 }
 
@@ -507,11 +515,28 @@ function subscribeToMessages(chatId) {
     const wasAtBottom = isScrolledToBottom();
     let added = false;
     snap.docChanges().forEach(change => {
-      if (change.type === 'added') { addMessageToUI(change.doc.id, change.doc.data()); added = true; }
+      if (change.type === 'added') {
+        addMessageToUI(change.doc.id, change.doc.data());
+        added = true;
+      } else if (change.type === 'modified') {
+        // БАГФИКС: когда serverTimestamp() у своего только что отправленного
+        // сообщения подтверждается сервером, Firestore присылает этот же
+        // документ как 'modified', а не 'added'. Раньше это игнорировалось,
+        // и время сообщения так и оставалось пустым до перезагрузки страницы.
+        updateMessageTimeInUI(change.doc.id, change.doc.data());
+      }
     });
     if (added && (firstBatch || wasAtBottom)) scrollToBottom();
     firstBatch = false;
+  }, (err) => {
+    console.error('Ошибка подписки на сообщения (проверьте составной индекс Firestore: chatId == + timestamp asc):', err);
   });
+}
+function updateMessageTimeInUI(id, data) {
+  const el = document.getElementById(`msg-${id}`);
+  if (!el) return;
+  const timeEl = el.querySelector('.message-time');
+  if (timeEl) timeEl.textContent = formatTime(data.timestamp);
 }
 function addMessageToUI(id, data) {
   if (document.getElementById(`msg-${id}`)) return;
@@ -804,4 +829,3 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
-
