@@ -43,7 +43,8 @@ self.addEventListener('fetch', (event) => {
         // Есть в кеше — отдаём мгновенно, в фоне тихо обновляем кеш свежей версией.
         fetch(req).then(res => {
           if (res && res.status === 200) {
-            caches.open(CACHE_NAME).then(cache => cache.put(req, res.clone()));
+            const resClone = res.clone(); // клонируем СРАЗУ, до того как тело кто-то прочитает
+            caches.open(CACHE_NAME).then(cache => cache.put(req, resClone)).catch(() => {});
           }
         }).catch(() => { /* офлайн — просто оставляем то, что уже в кеше */ });
         return cached;
@@ -56,7 +57,13 @@ self.addEventListener('fetch', (event) => {
       // штатно (что и должно происходить для некешированного ресурса офлайн).
       return fetch(req).then(res => {
         if (res && res.status === 200) {
-          caches.open(CACHE_NAME).then(cache => cache.put(req, res.clone()));
+          // БАГФИКС: клонировать нужно СРАЗУ и синхронно. Раньше res.clone()
+          // вызывался внутри .then() у caches.open() — а это асинхронно,
+          // и к моменту выполнения браузер мог уже начать читать тело res
+          // (мы же его возвращаем через `return res` чуть ниже) — тогда
+          // clone() падал с "Response body is already used".
+          const resClone = res.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(req, resClone)).catch(() => {});
         }
         return res;
       });

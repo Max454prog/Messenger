@@ -125,7 +125,51 @@ function linkify(text) {
   const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
   return text.replace(urlRegex, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
 }
+// ============ Реальные анимированные эмодзи (Google Noto Animated Emoji) ============
+// У каждого эмодзи — своя настоящая покадровая Lottie-анимация с официального CDN
+// Google Fonts (fonts.gstatic.com), под открытой лицензией. Не у всех эмодзи есть
+// анимированная версия — для них аккуратно откатываемся на обычный текстовый эмодзи.
+function emojiToNotoCodepoint(emoji) {
+  return Array.from(emoji).map(ch => ch.codePointAt(0).toString(16).toLowerCase()).join('_');
+}
+const emojiLottieCache = new Map(); // codepoint -> Promise<lottieJSON|null>
+function getEmojiLottie(codepoint) {
+  if (emojiLottieCache.has(codepoint)) return emojiLottieCache.get(codepoint);
+  const promise = fetch(`https://fonts.gstatic.com/s/e/notoemoji/latest/${codepoint}/lottie.json`)
+    .then(res => { if (!res.ok) throw new Error('нет анимированной версии для этого эмодзи'); return res.json(); })
+    .catch(() => null);
+  emojiLottieCache.set(codepoint, promise);
+  return promise;
+}
+// Рендерит эмодзи в container: реальная Lottie-анимация, если доступна, иначе обычный текстовый эмодзи
+function renderAnimatedEmoji(container, emoji, { loop = false } = {}) {
+  container.textContent = emoji; // сразу показываем статичный эмодзи, пока грузится анимация
+  const codepoint = emojiToNotoCodepoint(emoji);
+  getEmojiLottie(codepoint).then(data => {
+    if (data && window.lottie && container.isConnected) {
+      container.textContent = '';
+      lottie.loadAnimation({ container, renderer: 'svg', loop, autoplay: true, animationData: data });
+    }
+  });
+}
+
 const DEFAULT_AVATAR = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ccircle cx="50" cy="50" r="50" fill="%23343450"/%3E%3C/svg%3E';
+
+// Если сообщение целиком состоит из 1-3 эмодзи (без текста) — показываем его
+// крупно и с реальной анимацией, как это делает Telegram для эмодзи-стикеров.
+function getEmojiOnlyInfo(text) {
+  const stripped = (text || '').replace(/\s+/g, '');
+  if (!stripped) return null;
+  const emojiOnlyRegex = /^(\p{Extended_Pictographic}(\u200d\p{Extended_Pictographic})*\ufe0f?)+$/u;
+  if (!emojiOnlyRegex.test(stripped)) return null;
+  let graphemes;
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    graphemes = Array.from(new Intl.Segmenter('ru', { granularity: 'grapheme' }).segment(stripped), s => s.segment);
+  } else {
+    graphemes = Array.from(stripped); // грубая оценка, если Intl.Segmenter недоступен
+  }
+  return graphemes.length > 0 && graphemes.length <= 3 ? { graphemes } : null;
+}
 
 function setLoginMode(mode) {
   isLoginMode = mode;
@@ -579,7 +623,21 @@ function addMessageToUI(id, data) {
   header.innerHTML = `<span class="message-username">${data.userName || 'Пользователь'}</span><span class="message-time">${formatTime(data.timestamp)}</span>`;
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
-  bubble.innerHTML = linkify(data.text);
+  const emojiInfo = getEmojiOnlyInfo(data.text);
+  if (emojiInfo) {
+    bubble.classList.add('emoji-only');
+    emojiInfo.graphemes.forEach(g => {
+      const anim = document.createElement('span');
+      anim.className = 'emoji-anim';
+      bubble.appendChild(anim);
+      renderAnimatedEmoji(anim, g);
+    });
+    bubble.addEventListener('click', () => {
+      bubble.querySelectorAll('.emoji-anim').forEach((anim, i) => renderAnimatedEmoji(anim, emojiInfo.graphemes[i]));
+    });
+  } else {
+    bubble.innerHTML = linkify(data.text);
+  }
   body.appendChild(header);
   body.appendChild(bubble);
 
@@ -619,10 +677,27 @@ function renderEmojiPanel() {
   emojis.forEach(emoji => {
     const span = document.createElement('span');
     span.textContent = emoji;
+    let hoverAnim = null;
+    span.addEventListener('mouseenter', () => {
+      const codepoint = emojiToNotoCodepoint(emoji);
+      getEmojiLottie(codepoint).then(data => {
+        if (data && window.lottie && span.matches(':hover')) {
+          span.textContent = '';
+          hoverAnim = lottie.loadAnimation({ container: span, renderer: 'svg', loop: true, autoplay: true, animationData: data });
+        }
+      });
+    });
+    span.addEventListener('mouseleave', () => {
+      if (hoverAnim) { hoverAnim.destroy(); hoverAnim = null; }
+      span.textContent = emoji;
+    });
     span.addEventListener('click', () => {
+      span.classList.remove('emoji-pop');
+      void span.offsetWidth; // форсируем reflow, чтобы анимацию можно было запускать повторно
+      span.classList.add('emoji-pop');
       messageInput.value += emoji;
       messageInput.focus();
-      emojiPanel.style.display = 'none';
+      setTimeout(() => { emojiPanel.style.display = 'none'; }, 150);
     });
     emojiPanel.appendChild(span);
   });
