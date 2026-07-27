@@ -213,9 +213,6 @@ async function loadUserData(uid) {
 // Профиль и аватар
 async function updateProfile(nickname, avatarUrl, phone) {
   if (!currentUser) return;
-  // БАГФИКС: раньше сюда могла попасть DEFAULT_AVATAR-заглушка (просто открыли
-  // профиль и нажали "Сохранить", не загружая фото) и навсегда прописывалась
-  // как "настоящий" аватар в Firestore. Явно отфильтровываем заглушку.
   const cleanAvatar = (avatarUrl && avatarUrl !== DEFAULT_AVATAR) ? avatarUrl : '';
   await updateDoc(doc(db, 'users', currentUser.uid), { nickname, avatarUrl: cleanAvatar, phone: phone || '' });
   currentUserData.nickname = nickname;
@@ -233,10 +230,12 @@ function updateSidebarProfile() {
   }
 }
 function compressImage(file, maxW=200, maxH=200) {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
     reader.onload = e => {
       const img = new Image();
+      img.onerror = () => reject(new Error('Файл повреждён или это не изображение'));
       img.onload = () => {
         const canvas = document.createElement('canvas');
         let { width, height } = img;
@@ -252,12 +251,6 @@ function compressImage(file, maxW=200, maxH=200) {
   });
 }
 
-// Напоминание про телефон для тех, кто зарегистрировался ещё до появления этого поля.
-// БАГФИКС: раньше это писалось как обычное сообщение в общий "Чат поддержки"
-// (chatId:'support' — один и тот же для ВСЕХ пользователей), из-за чего личное
-// напоминание конкретному человеку было видно вообще всем в общем чате.
-// Теперь это чисто локальный баннер в интерфейсе, ничего не пишем в Firestore
-// в общий чат — только помечаем флаг phoneReminderSent, чтобы не показывать повторно.
 function maybeSendPhoneReminder(uid, data) {
   if (data.phone || data.phoneReminderSent) return;
   showLocalNotice(`${data.nickname || 'Пользователь'}, добавьте, пожалуйста, номер телефона в профиле.`);
@@ -273,19 +266,46 @@ function showLocalNotice(text) {
 }
 
 // ============ Присутствие (online) ============
+// БАГФИКС: раньше "в сети" определялось только по флагу online:true. Но если
+// человек просто закрыл вкладку/приложение (не нажав "Выйти"), beforeunload
+// часто не срабатывает (особенно на мобильных) — и online:true остаётся
+// в базе навсегда, никто больше не пишет в этот документ. Теперь статус
+// дополнительно проверяется по свежести lastActive: если heartbeat молчит
+// дольше PRESENCE_TIMEOUT_MS — считаем человека офлайн, даже если флаг
+// online в базе так и не был сброшен.
+const PRESENCE_TIMEOUT_MS = 50000; // heartbeat раз в 25с — 50с тишины = офлайн
+const presenceDataCache = new Map(); // uid -> последние сырые данные users/{uid}
+function computeIsOnline(data) {
+  if (!data || data.online !== true || !data.lastActive) return false;
+  const lastMs = data.lastActive.toMillis ? data.lastActive.toMillis() : new Date(data.lastActive).getTime();
+  return (Date.now() - lastMs) < PRESENCE_TIMEOUT_MS;
+}
+function refreshPresenceUI(uid) {
+  const isOnline = computeIsOnline(presenceDataCache.get(uid));
+  document.querySelectorAll(`.status-dot[data-uid="${uid}"]`).forEach(dot => dot.classList.toggle('online', isOnline));
+  if (chatHeaderStatusDot.dataset.uid === uid) {
+    chatHeaderStatusDot.classList.toggle('online', isOnline);
+    chatHeaderSub.textContent = isOnline ? 'в сети' : 'не в сети';
+    chatHeaderSub.classList.toggle('offline', !isOnline);
+  }
+}
+// Раз в 15с пересчитываем статус даже без новых событий из Firestore — иначе
+// "в сети" зависнет навечно у того, кто просто закрыл вкладку: новых
+// снапшотов для его документа больше никогда не будет.
+setInterval(() => { presenceDataCache.forEach((_, uid) => refreshPresenceUI(uid)); }, 15000);
+
 function ensureUserStatusListener(uid) {
   if (!uid || userStatusListeners.has(uid)) return;
   const unsub = onSnapshot(doc(db, 'users', uid), snap => {
-    const isOnline = snap.exists() && snap.data().online === true;
-    document.querySelectorAll(`.status-dot[data-uid="${uid}"]`).forEach(dot => {
-      dot.classList.toggle('online', isOnline);
-    });
+    presenceDataCache.set(uid, snap.exists() ? snap.data() : null);
+    refreshPresenceUI(uid);
   });
   userStatusListeners.set(uid, unsub);
 }
 function clearUserStatusListeners() {
   userStatusListeners.forEach(unsub => unsub());
   userStatusListeners.clear();
+  presenceDataCache.clear();
 }
 async function setOnline(state) {
   if (!currentUser) return;
@@ -387,19 +407,24 @@ function renderStagedChips() {
 async function startPrivateChat(otherUser) {
   const chatId = privateChatId(currentUser.uid, otherUser.uid);
   const chatRef = doc(db, 'chats', chatId);
-  const snap = await getDoc(chatRef);
-  if (!snap.exists()) {
-    await setDoc(chatRef, {
-      type: 'private',
-      members: [currentUser.uid, otherUser.uid],
-      memberInfo: {
-        [currentUser.uid]: { nickname: currentUserData.nickname || 'Пользователь', avatarUrl: currentUserData.avatarUrl || '' },
-        [otherUser.uid]: { nickname: otherUser.nickname || 'Пользователь', avatarUrl: otherUser.avatarUrl || '' }
-      },
-      createdBy: currentUser.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
+  try {
+    const snap = await getDoc(chatRef);
+    if (!snap.exists()) {
+      await setDoc(chatRef, {
+        type: 'private',
+        members: [currentUser.uid, otherUser.uid],
+        memberInfo: {
+          [currentUser.uid]: { nickname: currentUserData.nickname || 'Пользователь', avatarUrl: currentUserData.avatarUrl || '' },
+          [otherUser.uid]: { nickname: otherUser.nickname || 'Пользователь', avatarUrl: otherUser.avatarUrl || '' }
+        },
+        createdBy: currentUser.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    }
+  } catch (e) {
+    alert('Не удалось открыть чат. Попробуйте ещё раз.');
+    return;
   }
   selectChat(chatId, otherUser.nickname || 'Пользователь', { type: 'private', otherUid: otherUser.uid });
   closeNewChatModal();
@@ -411,15 +436,21 @@ async function createGroupChat() {
   const memberInfo = { [currentUser.uid]: { nickname: currentUserData.nickname || 'Пользователь', avatarUrl: currentUserData.avatarUrl || '' } };
   stagedMembers.forEach(u => { memberInfo[u.uid] = { nickname: u.nickname || 'Пользователь', avatarUrl: u.avatarUrl || '' }; });
   const membersArr = [currentUser.uid, ...stagedMembers.map(u => u.uid)];
-  const docRef = await addDoc(collection(db, 'chats'), {
-    type: 'group',
-    name,
-    members: membersArr,
-    memberInfo,
-    createdBy: currentUser.uid,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  });
+  let docRef;
+  try {
+    docRef = await addDoc(collection(db, 'chats'), {
+      type: 'group',
+      name,
+      members: membersArr,
+      memberInfo,
+      createdBy: currentUser.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  } catch (e) {
+    alert('Не удалось создать группу. Попробуйте ещё раз.');
+    return;
+  }
   selectChat(docRef.id, name, { type: 'group', memberCount: membersArr.length });
   closeNewChatModal();
 }
@@ -447,17 +478,17 @@ function updateChatHeaderMeta(meta) {
     unsubscribeHeaderPresence = onSnapshot(doc(db, 'users', meta.otherUid), snap => {
       const data = snap.exists() ? snap.data() : {};
       chatHeaderAvatar.src = data.avatarUrl || DEFAULT_AVATAR;
-      const isOnline = data.online === true;
-      chatHeaderStatusDot.classList.toggle('online', isOnline);
-      chatHeaderSub.textContent = isOnline ? 'в сети' : 'не в сети';
-      chatHeaderSub.classList.toggle('offline', !isOnline);
+      presenceDataCache.set(meta.otherUid, data);
+      refreshPresenceUI(meta.otherUid);
     });
   } else if (meta.type === 'group') {
     chatHeaderAvatarWrap.style.display = 'none';
+    delete chatHeaderStatusDot.dataset.uid; // иначе периодическая ревалидация presence перепишет текст шапки
     chatHeaderSub.textContent = `${meta.memberCount || ''} участник(ов)`.trim();
     chatHeaderSub.classList.remove('offline');
   } else {
     chatHeaderAvatarWrap.style.display = 'none';
+    delete chatHeaderStatusDot.dataset.uid; // иначе периодическая ревалидация presence перепишет текст шапки
     chatHeaderSub.textContent = meta.subtitle || 'Открытый чат для всех';
     chatHeaderSub.classList.remove('offline');
   }
@@ -474,9 +505,6 @@ function subscribeToChatList() {
     });
     refreshActiveChatHighlight();
   }, (err) => {
-    // Если не хватает составного индекса, Firestore выдаёт ссылку на его создание —
-    // смотрите консоль браузера (F12). Без индекса список личных/групповых чатов
-    // молча не будет обновляться.
     console.error('Ошибка подписки на список чатов (проверьте составной индекс Firestore: members array-contains + updatedAt desc):', err);
   });
 }
@@ -563,10 +591,6 @@ function subscribeToMessages(chatId) {
         addMessageToUI(change.doc.id, change.doc.data());
         added = true;
       } else if (change.type === 'modified') {
-        // БАГФИКС: когда serverTimestamp() у своего только что отправленного
-        // сообщения подтверждается сервером, Firestore присылает этот же
-        // документ как 'modified', а не 'added'. Раньше это игнорировалось,
-        // и время сообщения так и оставалось пустым до перезагрузки страницы.
         updateMessageTimeInUI(change.doc.id, change.doc.data());
       }
     });
@@ -585,8 +609,6 @@ function updateMessageTimeInUI(id, data) {
 function addMessageToUI(id, data) {
   if (document.getElementById(`msg-${id}`)) return;
 
-  // Системные сообщения (например, напоминание из "Чата поддержки") показываем
-  // отдельной центрированной плашкой, без аватара и деления на "своё/чужое".
   if (data.system) {
     const sysEl = document.createElement('div');
     sysEl.id = `msg-${id}`;
@@ -651,14 +673,19 @@ async function sendMessage(text) {
   if (!currentUser || !currentUserData) return;
   const trimmed = text.trim();
   if (!trimmed) return;
-  await addDoc(collection(db, 'messages'), {
-    text: trimmed,
-    userId: currentUser.uid,
-    userName: currentUserData.nickname || 'Пользователь',
-    userAvatarUrl: currentUserData.avatarUrl || '',
-    chatId: activeChatId,
-    timestamp: serverTimestamp()
-  });
+  try {
+    await addDoc(collection(db, 'messages'), {
+      text: trimmed,
+      userId: currentUser.uid,
+      userName: currentUserData.nickname || 'Пользователь',
+      userAvatarUrl: currentUserData.avatarUrl || '',
+      chatId: activeChatId,
+      timestamp: serverTimestamp()
+    });
+  } catch (e) {
+    alert('Не удалось отправить сообщение. Проверьте подключение к интернету и попробуйте ещё раз.');
+    return; // текст остаётся в поле ввода — пользователь не теряет написанное
+  }
   messageInput.value = '';
   if (activeChatId !== 'general') {
     try {
@@ -693,7 +720,7 @@ function renderEmojiPanel() {
     });
     span.addEventListener('click', () => {
       span.classList.remove('emoji-pop');
-      void span.offsetWidth; // форсируем reflow, чтобы анимацию можно было запускать повторно
+      void span.offsetWidth;
       span.classList.add('emoji-pop');
       messageInput.value += emoji;
       messageInput.focus();
@@ -733,7 +760,6 @@ function startAnimation(type) {
     particle.style.animationDuration = duration + 's';
     container.appendChild(particle);
   }
-  // Периодически пересоздаём для бесконечности
   animationInterval = setInterval(() => {
     const container = mainChat.querySelector('.animation-container');
     if (!container) return;
@@ -760,7 +786,12 @@ closeSettingsBtn.addEventListener('click', () => settingsModal.style.display = '
 saveSettingsBtn.addEventListener('click', async () => {
   const newAnim = animationSelect.value;
   if (!currentUser) return;
-  await updateDoc(doc(db, 'users', currentUser.uid), { animation: newAnim });
+  try {
+    await updateDoc(doc(db, 'users', currentUser.uid), { animation: newAnim });
+  } catch (e) {
+    alert('Не удалось сохранить настройки. Попробуйте ещё раз.');
+    return;
+  }
   currentUserData.animation = newAnim;
   startAnimation(newAnim);
   settingsModal.style.display = 'none';
@@ -787,10 +818,6 @@ authForm.addEventListener('submit', async (e) => {
     displayAuthError(msg);
   }
 });
-// Кнопки login-btn/register-btn уже type="submit" внутри формы — клик по ним и так
-// вызывает событие submit нативно, поэтому отдельные обработчики клика не нужны
-// (раньше они дублировали вызов authForm submit, из-за чего registerUser/loginUser
-// срабатывали дважды на одно нажатие).
 switchLink.addEventListener('click', e=>{ e.preventDefault(); clearAuthError(); setLoginMode(false); });
 logoutBtn.addEventListener('click', async ()=>{
   if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
@@ -810,14 +837,25 @@ closeModalBtn.addEventListener('click', ()=> profileModal.style.display='none');
 avatarInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const dataUrl = await compressImage(file);
-  profileAvatarPreview.src = dataUrl;
+  if (!file.type.startsWith('image/')) { alert('Пожалуйста, выберите файл изображения.'); avatarInput.value = ''; return; }
+  try {
+    const dataUrl = await compressImage(file);
+    profileAvatarPreview.src = dataUrl;
+  } catch (err) {
+    alert('Не удалось загрузить изображение. Попробуйте другой файл.');
+  }
+  avatarInput.value = ''; // сбрасываем, чтобы повторный выбор того же файла тоже сработал
 });
 saveProfileBtn.addEventListener('click', async ()=>{
   const newNick = profileNickname.value.trim() || currentUserData.nickname;
   const newAvatar = profileAvatarPreview.src;
   const newPhone = profilePhone.value.trim();
-  await updateProfile(newNick, newAvatar, newPhone);
+  try {
+    await updateProfile(newNick, newAvatar, newPhone);
+  } catch (e) {
+    alert('Не удалось сохранить профиль. Попробуйте ещё раз.');
+    return;
+  }
   profileModal.style.display = 'none';
 });
 
@@ -894,13 +932,9 @@ onAuthStateChanged(auth, async user => {
 setLoginMode(true);
 
 // ============ Регистрация Service Worker ============
-// Нужна для полноценной PWA-установки (кнопка "Установить" в браузере)
-// и быстрой офлайн-загрузки интерфейса. Работает только по https (или localhost).
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {
-      // Если регистрация не удалась (например, страница открыта как file://),
-      // приложение продолжает работать в обычном режиме — просто без PWA-фич.
     });
   });
 }
