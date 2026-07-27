@@ -38,7 +38,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(req).then(cached => {
+    caches.match(req, { ignoreSearch: true }).then(cached => {
       if (cached) {
         // Есть в кеше — отдаём мгновенно, в фоне тихо обновляем кеш свежей версией.
         fetch(req).then(res => {
