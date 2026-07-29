@@ -3,7 +3,10 @@
 // Firebase-запросы (Auth/Firestore) НЕ кешируются — они всегда идут в сеть,
 // чтобы сообщения оставались актуальными в реальном времени.
 
-const CACHE_NAME = 'iskra-shell-v1';
+// Версия кеша — при каждом реальном обновлении файлов проекта браузер сам
+// заметит, что sw.js изменился (побайтово), скачает новую версию и запустит
+// цикл install -> waiting -> (по команде со страницы) activate.
+const CACHE_NAME = 'iskra-shell-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -16,8 +19,20 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
+    // Раньше тут был self.skipWaiting() — новая версия активировалась сразу,
+    // без ведома пользователя, что могло привести к рассинхрону между уже
+    // загруженной страницей и новым SW. Теперь новый SW встаёт в режим
+    // "waiting" и ждёт явной команды со страницы (см. 'message' ниже) —
+    // именно на этом и построено уведомление "Доступно обновление".
   );
+});
+
+// Страница (app.js) присылает эту команду, когда пользователь нажимает
+// "Обновить" в баннере — только тогда новый SW реально активируется.
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {

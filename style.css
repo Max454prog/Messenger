@@ -35,11 +35,11 @@ html, body { height:100%; }
 body {
   font-family:'Inter', sans-serif; background:var(--bg-app);
   color:var(--text-primary); height:100vh; height:100dvh; overflow:hidden;
-  display:flex; justify-content:center; align-items:center;
+  display:flex; flex-direction:column;
 }
 h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 
-#app { width:100%; height:100%; display:flex; position:relative; }
+#app { width:100%; flex:1 1 auto; min-height:0; display:flex; position:relative; }
 .screen { display:none; width:100%; height:100%; }
 .screen.active { display:flex; }
 
@@ -220,6 +220,25 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 .message-username { font-weight:600; color:var(--accent-1); }
 .message-time { font-size:0.7rem; opacity:0.8; }
 
+.msg-menu-btn {
+  background:none; border:none; color:var(--text-tertiary); cursor:pointer; font-size:1rem;
+  line-height:1; padding:2px 6px; border-radius:6px; opacity:0; transition:opacity var(--transition), background var(--transition);
+}
+.message:hover .msg-menu-btn { opacity:1; }
+.msg-menu-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
+@media (hover:none) { .msg-menu-btn { opacity:0.6; } } /* на тач-экранах hover не сработает — показываем сразу, но приглушённо */
+
+.msg-context-menu {
+  position:fixed; background:var(--bg-elevated); border:1px solid var(--border-strong); border-radius:var(--radius-sm);
+  box-shadow:var(--shadow-soft); z-index:500; display:flex; flex-direction:column; min-width:170px; overflow:hidden;
+}
+.msg-context-menu button {
+  background:none; border:none; color:var(--text-primary); text-align:left; padding:10px 14px; font-size:0.88rem;
+  cursor:pointer; transition:background var(--transition);
+}
+.msg-context-menu button:hover { background:var(--bg-hover); }
+.msg-context-menu button.danger { color:#ff6b6b; }
+
 .message-bubble {
   padding:10px 15px; border-radius:19px; font-size:0.95rem; line-height:1.45;
   word-wrap:break-word; position:relative; box-shadow:0 2px 10px rgba(0,0,0,0.15);
@@ -398,6 +417,22 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
   padding:12px 20px; border-radius:var(--radius-sm); box-shadow:var(--shadow-soft);
   font-size:0.88rem; z-index:200; max-width:90%; text-align:center; animation:splashRise 0.25s cubic-bezier(.2,.8,.2,1);
 }
+
+.update-banner {
+  flex-shrink:0; z-index:600;
+  display:flex; align-items:center; justify-content:center; gap:14px;
+  background:var(--accent-grad); color:#fff; padding:10px 16px;
+  padding-top:calc(10px + env(safe-area-inset-top));
+  font-size:0.9rem; box-shadow:0 4px 14px rgba(0,0,0,0.25);
+  animation:splashRise 0.25s cubic-bezier(.2,.8,.2,1);
+}
+.update-banner button {
+  background:rgba(255,255,255,0.2); border:1px solid rgba(255,255,255,0.4); color:#fff;
+  padding:6px 16px; border-radius:var(--radius-sm); font-size:0.85rem; font-weight:600;
+  cursor:pointer; transition:background var(--transition);
+}
+.update-banner button:hover:not(:disabled) { background:rgba(255,255,255,0.32); }
+.update-banner button:disabled { opacity:0.7; cursor:default; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }

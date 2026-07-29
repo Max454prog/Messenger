@@ -931,10 +931,75 @@ onAuthStateChanged(auth, async user => {
 });
 setLoginMode(true);
 
-// ============ Регистрация Service Worker ============
+// ============ Регистрация Service Worker + автообнаружение обновлений ============
+// Идея: при каждой замене файлов на хостинге (например, при пуше на GitHub)
+// браузер сам заметит, что sw.js изменился побайтово, скачает новую версию
+// в фоне и поставит её в режим "waiting". Мы это ловим и показываем баннер
+// с кнопкой "Обновить" — вручную сбрасывать кеш или что-либо ещё не нужно.
+let swAlreadyReloading = false; // объявлен на уровне модуля — используется и ниже, и в showUpdateBanner
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {
+    navigator.serviceWorker.register('sw.js').then(registration => {
+      // Уже есть где-то в очереди новая версия, ждущая активации (например,
+      // человек открыл вкладку уже после того, как обновление подгрузилось)
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        showUpdateBanner(registration);
+      }
+      // Новая версия начала устанавливаться прямо сейчас, пока вкладка открыта
+      registration.addEventListener('updatefound', () => {
+        const newWorker = registration.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          // controller уже есть -> это не первая установка, а именно апдейт
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateBanner(registration);
+          }
+        });
+      });
+      // Активная вкладка не перечитывает sw.js сама по себе часами — подстёгиваем
+      // проверку при возврате в приложение и раз в час на всякий случай.
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) registration.update().catch(() => {});
+      });
+      setInterval(() => registration.update().catch(() => {}), 60 * 60 * 1000);
+    }).catch(() => {
+      // Если регистрация не удалась (например, страница открыта как file://),
+      // приложение продолжает работать в обычном режиме — просто без PWA-фич.
     });
   });
+
+  // Как только новый SW реально взял управление страницей (после нашей
+  // команды SKIP_WAITING) — перезагружаем один раз, чтобы подхватить свежие
+  // index.html/app.js/style.css без ручного вмешательства пользователя.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swAlreadyReloading) return;
+    swAlreadyReloading = true;
+    window.location.reload();
+  });
+}
+
+function showUpdateBanner(registration) {
+  if (document.querySelector('.update-banner')) return; // уже показан
+  const banner = document.createElement('div');
+  banner.className = 'update-banner';
+  const text = document.createElement('span');
+  text.textContent = 'Доступно обновление «Искры»';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Обновить';
+  btn.addEventListener('click', () => {
+    if (registration.waiting) registration.waiting.postMessage('SKIP_WAITING');
+    btn.disabled = true;
+    btn.textContent = 'Обновляем…';
+    // БАГФИКС: страховка на случай, если controllerchange по какой-то причине
+    // не сработает (например, registration.waiting неожиданно оказался пуст) —
+    // без этого кнопка зависла бы навсегда с надписью "Обновляем…", а
+    // перезагрузки так и не произошло бы.
+    setTimeout(() => {
+      if (!swAlreadyReloading) { swAlreadyReloading = true; window.location.reload(); }
+    }, 4000);
+  });
+  banner.appendChild(text);
+  banner.appendChild(btn);
+  document.body.insertBefore(banner, document.body.firstChild);
 }
