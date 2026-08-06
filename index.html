@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -113,6 +113,13 @@
               <button id="close-sidebar" class="icon-btn" aria-label="Закрыть меню">✕</button>
             </div>
           </div>
+          <button id="status-nav-btn" class="chat-item status-nav-btn" type="button">
+            <span class="chat-icon">📸</span>
+            <div class="chat-item-text">
+              <span class="chat-name">Статусы <span class="beta-badge">БЕТА</span></span>
+              <span class="chat-preview">Поделитесь моментом на 24 часа</span>
+            </div>
+          </button>
           <ul class="chat-list" id="chat-list">
             <li class="chat-item active" data-chat-id="general">
               <span class="chat-icon">💬</span>
@@ -249,6 +256,52 @@
           <button id="save-settings" class="btn btn-primary">Сохранить</button>
           <button id="close-settings" class="btn btn-secondary">Отмена</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Модальное окно статусов (БЕТА) -->
+    <div id="status-modal" class="modal" style="display:none">
+      <div class="modal-content modal-content-wide">
+        <h3>Статусы <span class="beta-badge">БЕТА</span></h3>
+
+        <div id="my-status-row" class="status-row my-status"></div>
+
+        <div id="status-add-form" class="status-add-form" style="display:none">
+          <textarea id="status-text-input" placeholder="Что у вас нового?" maxlength="300" rows="3"></textarea>
+          <img id="status-image-preview" class="status-image-preview" src="" alt="" style="display:none">
+          <div class="modal-buttons">
+            <label for="status-image-input" class="btn btn-secondary btn-compact">🖼️ Фото</label>
+            <input type="file" id="status-image-input" accept="image/*" style="display:none">
+            <button type="button" id="status-publish-btn" class="btn btn-primary">Опубликовать</button>
+            <button type="button" id="status-cancel-btn" class="btn btn-secondary">Отмена</button>
+          </div>
+        </div>
+
+        <div id="status-list" class="status-list"></div>
+
+        <div class="modal-buttons">
+          <button id="close-status-modal" class="btn btn-secondary full-width">Закрыть</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Полноэкранный просмотр статуса -->
+    <div id="status-viewer" class="status-viewer" style="display:none">
+      <div class="status-viewer-header">
+        <img id="status-viewer-avatar" class="avatar-small" src="" alt="">
+        <div class="status-viewer-info">
+          <span id="status-viewer-name"></span>
+          <span id="status-viewer-time"></span>
+        </div>
+        <button id="status-viewer-close" class="icon-btn" type="button" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="status-viewer-content">
+        <img id="status-viewer-image" src="" alt="" style="display:none">
+        <p id="status-viewer-text"></p>
+      </div>
+      <div id="status-viewer-viewers" class="status-viewer-viewers" style="display:none">
+        <h4>История просмотров</h4>
+        <div id="status-viewers-list"></div>
       </div>
     </div>
   </div>

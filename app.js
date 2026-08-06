@@ -11,7 +11,7 @@ const firebaseConfig = {
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, getDocs, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -32,7 +32,6 @@ const authError = document.getElementById('auth-error');
 const loginBtn = document.getElementById('login-btn');
 const registerBtn = document.getElementById('register-btn');
 const authToggle = document.getElementById('auth-toggle');
-const switchLink = document.getElementById('switch-to-register');
 const messagesContainer = document.getElementById('messages-container');
 const messagesList = document.getElementById('messages-list');
 const messageForm = document.getElementById('message-form');
@@ -78,6 +77,26 @@ const searchResultsEl = document.getElementById('search-results');
 const searchHint = document.getElementById('search-hint');
 const stagedMembersEl = document.getElementById('staged-members');
 const createGroupBtn = document.getElementById('create-group-btn');
+const statusNavBtn = document.getElementById('status-nav-btn');
+const statusModal = document.getElementById('status-modal');
+const closeStatusModalBtn = document.getElementById('close-status-modal');
+const myStatusRow = document.getElementById('my-status-row');
+const statusAddForm = document.getElementById('status-add-form');
+const statusTextInput = document.getElementById('status-text-input');
+const statusImageInput = document.getElementById('status-image-input');
+const statusImagePreview = document.getElementById('status-image-preview');
+const statusPublishBtn = document.getElementById('status-publish-btn');
+const statusCancelBtn = document.getElementById('status-cancel-btn');
+const statusListEl = document.getElementById('status-list');
+const statusViewer = document.getElementById('status-viewer');
+const statusViewerAvatar = document.getElementById('status-viewer-avatar');
+const statusViewerName = document.getElementById('status-viewer-name');
+const statusViewerTime = document.getElementById('status-viewer-time');
+const statusViewerClose = document.getElementById('status-viewer-close');
+const statusViewerImage = document.getElementById('status-viewer-image');
+const statusViewerText = document.getElementById('status-viewer-text');
+const statusViewerViewersWrap = document.getElementById('status-viewer-viewers');
+const statusViewersList = document.getElementById('status-viewers-list');
 
 let currentUser = null;
 let currentUserData = { nickname: '', avatarUrl: '', animation: 'none' };
@@ -92,9 +111,14 @@ let unsubscribeHeaderPresence = null;
 let newChatMode = 'private'; // 'private' | 'group'
 let stagedMembers = []; // { uid, nickname, avatarUrl } — только для режима "группа"
 let lastSearchResults = []; // кэш последних результатов поиска пользователей
+let unsubscribeStatuses = null;
+let currentStatuses = []; // все активные (не старше 24ч) статусы из подписки
+let pendingStatusImage = ''; // сжатое изображение перед публикацией статуса
+let statusCleanupInterval = null;
+
+const STATUS_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 // ============ Splash screen ============
-// Показывается минимум ~1.3с, скрывается как только известно состояние авторизации
 let splashMinTimeDone = false;
 let authStateKnown = false;
 function maybeHideSplash() {
@@ -121,14 +145,24 @@ function isScrolledToBottom() {
 function scrollToBottom() { messagesContainer.scrollTop = messagesContainer.scrollHeight; }
 function clearAuthError() { authError.textContent = ''; }
 function displayAuthError(msg) { authError.textContent = msg; }
+
+// БАГФИКС (безопасность): раньше никнеймы, названия групп, тексты сообщений
+// и статусов вставлялись через innerHTML БЕЗ экранирования. Любой пользователь
+// мог зарегистрироваться с никнеймом вида `<img src=x onerror=alert(1)>` или
+// отправить такое в сообщении — это выполнилось бы в браузере всех остальных
+// (классическая stored-XSS). Теперь весь пользовательский текст обязательно
+// экранируется перед вставкой в HTML.
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
 function linkify(text) {
+  const escaped = escapeHtml(text);
   const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
-  return text.replace(urlRegex, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+  return escaped.replace(urlRegex, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
 }
 // ============ Реальные анимированные эмодзи (Google Noto Animated Emoji) ============
-// У каждого эмодзи — своя настоящая покадровая Lottie-анимация с официального CDN
-// Google Fonts (fonts.gstatic.com), под открытой лицензией. Не у всех эмодзи есть
-// анимированная версия — для них аккуратно откатываемся на обычный текстовый эмодзи.
 function emojiToNotoCodepoint(emoji) {
   return Array.from(emoji).map(ch => ch.codePointAt(0).toString(16).toLowerCase()).join('_');
 }
@@ -141,22 +175,31 @@ function getEmojiLottie(codepoint) {
   emojiLottieCache.set(codepoint, promise);
   return promise;
 }
-// Рендерит эмодзи в container: реальная Lottie-анимация, если доступна, иначе обычный текстовый эмодзи
+// БАГФИКС (утечка производительности, особенно заметна на телефонах): раньше
+// при повторном вызове для уже занятого контейнера (например, пользователь
+// несколько раз подряд тапнул по эмодзи-сообщению, чтобы переиграть анимацию)
+// предыдущий экземпляр Lottie-плеера не уничтожался — он просто терял свой
+// DOM-узел (container.textContent = emoji перезаписывал разметку), но сам
+// плеер молча продолжал работать в фоне и жечь CPU/батарею. При частых тапах
+// таких "невидимых" плееров могло накопиться много. Теперь перед созданием
+// новой анимации существующий экземпляр явно уничтожается через .destroy().
 function renderAnimatedEmoji(container, emoji, { loop = false } = {}) {
-  container.textContent = emoji; // сразу показываем статичный эмодзи, пока грузится анимация
+  if (container._lottieInstance) {
+    container._lottieInstance.destroy();
+    container._lottieInstance = null;
+  }
+  container.textContent = emoji;
   const codepoint = emojiToNotoCodepoint(emoji);
   getEmojiLottie(codepoint).then(data => {
     if (data && window.lottie && container.isConnected) {
       container.textContent = '';
-      lottie.loadAnimation({ container, renderer: 'svg', loop, autoplay: true, animationData: data });
+      container._lottieInstance = lottie.loadAnimation({ container, renderer: 'svg', loop, autoplay: true, animationData: data });
     }
   });
 }
 
 const DEFAULT_AVATAR = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ccircle cx="50" cy="50" r="50" fill="%23343450"/%3E%3C/svg%3E';
 
-// Если сообщение целиком состоит из 1-3 эмодзи (без текста) — показываем его
-// крупно и с реальной анимацией, как это делает Telegram для эмодзи-стикеров.
 function getEmojiOnlyInfo(text) {
   const stripped = (text || '').replace(/\s+/g, '');
   if (!stripped) return null;
@@ -166,7 +209,7 @@ function getEmojiOnlyInfo(text) {
   if (typeof Intl !== 'undefined' && Intl.Segmenter) {
     graphemes = Array.from(new Intl.Segmenter('ru', { granularity: 'grapheme' }).segment(stripped), s => s.segment);
   } else {
-    graphemes = Array.from(stripped); // грубая оценка, если Intl.Segmenter недоступен
+    graphemes = Array.from(stripped);
   }
   return graphemes.length > 0 && graphemes.length <= 3 ? { graphemes } : null;
 }
@@ -229,7 +272,35 @@ function updateSidebarProfile() {
     sidebarAvatar.style.display = 'none';
   }
 }
+// БАГФИКС (совместимость с телефоном): раньше сжатие изображения всегда шло
+// через <img> + <canvas>, а Canvas игнорирует EXIF-тег ориентации, который
+// камеры телефонов почти всегда пишут в файл (в отличие от скриншотов или
+// вебкамер на ноутбуке, где такого тега обычно нет). В результате фото,
+// снятое прямо на телефон (особенно в портретном режиме), после сжатия
+// оказывалось повёрнутым на 90/180 градусов — и в аватаре, и в статусе.
+// Теперь мы в первую очередь используем createImageBitmap с опцией
+// imageOrientation:'from-image' (она поддерживается всеми современными
+// мобильными и десктопными браузерами и сама поворачивает пиксели по EXIF
+// перед тем как мы их нарисуем на canvas). Старый способ через Image()
+// оставлен как запасной вариант для редких браузеров без этой опции.
 function compressImage(file, maxW=200, maxH=200) {
+  if (window.createImageBitmap) {
+    return createImageBitmap(file, { imageOrientation: 'from-image' })
+      .then(bitmap => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = bitmap;
+        if (width > height) { if (width > maxW) { height *= maxW/width; width = maxW; } }
+        else { if (height > maxH) { width *= maxH/height; height = maxH; } }
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+        bitmap.close();
+        return canvas.toDataURL('image/jpeg', 0.7);
+      })
+      .catch(() => compressImageLegacy(file, maxW, maxH));
+  }
+  return compressImageLegacy(file, maxW, maxH);
+}
+function compressImageLegacy(file, maxW=200, maxH=200) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
@@ -266,13 +337,6 @@ function showLocalNotice(text) {
 }
 
 // ============ Присутствие (online) ============
-// БАГФИКС: раньше "в сети" определялось только по флагу online:true. Но если
-// человек просто закрыл вкладку/приложение (не нажав "Выйти"), beforeunload
-// часто не срабатывает (особенно на мобильных) — и online:true остаётся
-// в базе навсегда, никто больше не пишет в этот документ. Теперь статус
-// дополнительно проверяется по свежести lastActive: если heartbeat молчит
-// дольше PRESENCE_TIMEOUT_MS — считаем человека офлайн, даже если флаг
-// online в базе так и не был сброшен.
 const PRESENCE_TIMEOUT_MS = 50000; // heartbeat раз в 25с — 50с тишины = офлайн
 const presenceDataCache = new Map(); // uid -> последние сырые данные users/{uid}
 function computeIsOnline(data) {
@@ -289,9 +353,6 @@ function refreshPresenceUI(uid) {
     chatHeaderSub.classList.toggle('offline', !isOnline);
   }
 }
-// Раз в 15с пересчитываем статус даже без новых событий из Firestore — иначе
-// "в сети" зависнет навечно у того, кто просто закрыл вкладку: новых
-// снапшотов для его документа больше никогда не будет.
 setInterval(() => { presenceDataCache.forEach((_, uid) => refreshPresenceUI(uid)); }, 15000);
 
 function ensureUserStatusListener(uid) {
@@ -332,7 +393,6 @@ function privateChatId(uidA, uidB) {
   return 'priv_' + [uidA, uidB].sort().join('_');
 }
 
-// Поиск пользователей по точному совпадению никнейма, email или телефона
 async function searchUsers(term) {
   const trimmed = term.trim();
   if (!trimmed) return [];
@@ -362,10 +422,10 @@ function renderSearchResults(results) {
     const item = document.createElement('div');
     item.className = 'search-result-item' + (newChatMode === 'group' && alreadyStaged ? ' added' : '');
     item.innerHTML = `
-      <img class="avatar-small" src="${user.avatarUrl || DEFAULT_AVATAR}" alt="">
+      <img class="avatar-small" src="${escapeHtml(user.avatarUrl || DEFAULT_AVATAR)}" alt="">
       <div class="search-result-info">
-        <span class="search-result-name">${user.nickname || 'Пользователь'}</span>
-        <span class="search-result-sub">${user.email || user.phone || ''}</span>
+        <span class="search-result-name">${escapeHtml(user.nickname || 'Пользователь')}</span>
+        <span class="search-result-sub">${escapeHtml(user.email || user.phone || '')}</span>
       </div>`;
     item.addEventListener('click', () => {
       if (newChatMode === 'private') {
@@ -394,7 +454,7 @@ function renderStagedChips() {
   stagedMembers.forEach(user => {
     const chip = document.createElement('div');
     chip.className = 'staged-chip';
-    chip.innerHTML = `<img src="${user.avatarUrl || DEFAULT_AVATAR}" alt=""><span>${user.nickname || 'Пользователь'}</span>`;
+    chip.innerHTML = `<img src="${escapeHtml(user.avatarUrl || DEFAULT_AVATAR)}" alt=""><span>${escapeHtml(user.nickname || 'Пользователь')}</span>`;
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.textContent = '✕';
@@ -483,12 +543,14 @@ function updateChatHeaderMeta(meta) {
     });
   } else if (meta.type === 'group') {
     chatHeaderAvatarWrap.style.display = 'none';
-    delete chatHeaderStatusDot.dataset.uid; // иначе периодическая ревалидация presence перепишет текст шапки
+    delete chatHeaderStatusDot.dataset.uid;
+    chatHeaderStatusDot.classList.remove('online');
     chatHeaderSub.textContent = `${meta.memberCount || ''} участник(ов)`.trim();
     chatHeaderSub.classList.remove('offline');
   } else {
     chatHeaderAvatarWrap.style.display = 'none';
-    delete chatHeaderStatusDot.dataset.uid; // иначе периодическая ревалидация presence перепишет текст шапки
+    delete chatHeaderStatusDot.dataset.uid;
+    chatHeaderStatusDot.classList.remove('online');
     chatHeaderSub.textContent = meta.subtitle || 'Открытый чат для всех';
     chatHeaderSub.classList.remove('offline');
   }
@@ -522,7 +584,7 @@ function renderChatListItem(chatId, data) {
     li.dataset.otherUid = otherUid || '';
     name = info.nickname || 'Пользователь';
     preview = data.lastMessage?.text || 'Нет сообщений';
-    iconHtml = `<div class="avatar-wrap"><img class="chat-avatar" src="${info.avatarUrl || DEFAULT_AVATAR}" alt=""><span class="status-dot" data-uid="${otherUid || ''}"></span></div>`;
+    iconHtml = `<div class="avatar-wrap"><img class="chat-avatar" src="${escapeHtml(info.avatarUrl || DEFAULT_AVATAR)}" alt=""><span class="status-dot" data-uid="${escapeHtml(otherUid || '')}"></span></div>`;
     if (otherUid) ensureUserStatusListener(otherUid);
   } else {
     name = data.name || 'Группа';
@@ -534,8 +596,8 @@ function renderChatListItem(chatId, data) {
   li.innerHTML = `
     ${iconHtml}
     <div class="chat-item-text">
-      <span class="chat-name">${name}</span>
-      <span class="chat-preview">${preview}</span>
+      <span class="chat-name">${escapeHtml(name)}</span>
+      <span class="chat-preview">${escapeHtml(preview)}</span>
     </div>`;
   return li;
 }
@@ -642,7 +704,15 @@ function addMessageToUI(id, data) {
   body.className = 'message-body';
   const header = document.createElement('div');
   header.className = 'message-header';
-  header.innerHTML = `<span class="message-username">${data.userName || 'Пользователь'}</span><span class="message-time">${formatTime(data.timestamp)}</span>`;
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'message-username';
+  nameSpan.textContent = data.userName || 'Пользователь';
+  const timeSpan = document.createElement('span');
+  timeSpan.className = 'message-time';
+  timeSpan.textContent = formatTime(data.timestamp);
+  header.appendChild(nameSpan);
+  header.appendChild(timeSpan);
+
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
   const emojiInfo = getEmojiOnlyInfo(data.text);
@@ -658,7 +728,7 @@ function addMessageToUI(id, data) {
       bubble.querySelectorAll('.emoji-anim').forEach((anim, i) => renderAnimatedEmoji(anim, emojiInfo.graphemes[i]));
     });
   } else {
-    bubble.innerHTML = linkify(data.text);
+    bubble.innerHTML = linkify(data.text); // linkify экранирует HTML перед вставкой ссылок
   }
   body.appendChild(header);
   body.appendChild(bubble);
@@ -673,23 +743,46 @@ async function sendMessage(text) {
   if (!currentUser || !currentUserData) return;
   const trimmed = text.trim();
   if (!trimmed) return;
+
+  // БАГФИКС: раньше chatId для обновления lastMessage/updatedAt читался из
+  // глобальной activeChatId уже ПОСЛЕ await addDoc(...). Если человек успевал
+  // переключиться на другой чат, пока сообщение ещё летело на сервер (что
+  // занимает какое-то время при плохой сети), то итоговый updateDoc() уходил
+  // не в тот чат — превью последнего сообщения и порядок сортировки в списке
+  // чатов портились у чата, в который человек только что переключился, хотя
+  // само сообщение на самом деле отправлялось в другой чат. Теперь id чата
+  // фиксируется один раз в начале функции и используется везде внутри неё,
+  // независимо от того, куда переключится пользователь дальше.
+  const targetChatId = activeChatId;
+
+  // БЫСТРАЯ ОТПРАВКА: поле ввода очищается сразу, не дожидаясь ответа сервера
+  // (см. предыдущий фикс) — как в Telegram/WhatsApp.
+  messageInput.value = '';
+  messageInput.focus();
+
   try {
     await addDoc(collection(db, 'messages'), {
       text: trimmed,
       userId: currentUser.uid,
       userName: currentUserData.nickname || 'Пользователь',
       userAvatarUrl: currentUserData.avatarUrl || '',
-      chatId: activeChatId,
+      chatId: targetChatId,
       timestamp: serverTimestamp()
     });
   } catch (e) {
+    // Текст возвращаем в поле, только если пользователь всё ещё в том же
+    // чате — иначе текст неотправленного сообщения из ОДНОГО чата подставился
+    // бы в поле ввода СОВСЕМ ДРУГОГО чата, в который человек уже переключился.
+    if (activeChatId === targetChatId) {
+      messageInput.value = trimmed;
+      messageInput.focus();
+    }
     alert('Не удалось отправить сообщение. Проверьте подключение к интернету и попробуйте ещё раз.');
-    return; // текст остаётся в поле ввода — пользователь не теряет написанное
+    return;
   }
-  messageInput.value = '';
-  if (activeChatId !== 'general') {
+  if (targetChatId !== 'general' && targetChatId !== 'support') {
     try {
-      await updateDoc(doc(db, 'chats', activeChatId), {
+      await updateDoc(doc(db, 'chats', targetChatId), {
         lastMessage: { text: trimmed, senderId: currentUser.uid, timestamp: serverTimestamp() },
         updatedAt: serverTimestamp()
       });
@@ -741,34 +834,44 @@ function clearAnimation() {
   const old = mainChat.querySelector('.animation-container');
   if (old) old.remove();
   if (animationInterval) clearInterval(animationInterval);
+  // БАГФИКС: переменную обязательно обнуляем, а не только очищаем интервал —
+  // иначе следующая проверка `if (animationInterval)` где-либо могла бы
+  // ошибочно решить, что анимация всё ещё активна.
+  animationInterval = null;
 }
+// БАГФИКС (производительность, особенно заметно на телефонах): раньше каждая
+// "частица" фоновой анимации (снежинка/капля/листик), включая те, что
+// добавлялись каждые 2 секунды через setInterval, навсегда оставалась в DOM —
+// её CSS-анимация падения заканчивалась, но сам элемент никто не удалял.
+// За долгую сессию в чате накапливались тысячи невидимых, но всё ещё живых
+// в DOM-дереве элементов, что нагружало CPU/GPU и заметно сажало батарею —
+// особенно на телефонах, где ресурсов меньше, чем на ноутбуке/десктопе.
+// Теперь каждая частица сама удаляет себя из DOM по событию 'animationend'.
 function startAnimation(type) {
   clearAnimation();
   if (type === 'none') return;
   const container = document.createElement('div');
   container.className = 'animation-container';
   mainChat.appendChild(container);
-  const count = type === 'rain' ? 40 : 20;
-  for (let i = 0; i < count; i++) {
+
+  function spawnParticle(targetContainer, delaySeconds) {
     const particle = document.createElement('div');
     particle.className = `particle ${type}`;
-    const left = Math.random() * 100;
-    const delay = Math.random() * 5;
-    const duration = 4 + Math.random() * 6;
-    particle.style.left = left + '%';
-    particle.style.animationDelay = delay + 's';
-    particle.style.animationDuration = duration + 's';
-    container.appendChild(particle);
+    particle.style.left = Math.random() * 100 + '%';
+    particle.style.animationDelay = delaySeconds + 's';
+    particle.style.animationDuration = (4 + Math.random() * 6) + 's';
+    particle.addEventListener('animationend', () => particle.remove());
+    targetContainer.appendChild(particle);
+  }
+
+  const count = type === 'rain' ? 40 : 20;
+  for (let i = 0; i < count; i++) {
+    spawnParticle(container, Math.random() * 5);
   }
   animationInterval = setInterval(() => {
-    const container = mainChat.querySelector('.animation-container');
-    if (!container) return;
-    const newParticle = document.createElement('div');
-    newParticle.className = `particle ${type}`;
-    newParticle.style.left = Math.random() * 100 + '%';
-    newParticle.style.animationDelay = '0s';
-    newParticle.style.animationDuration = (4 + Math.random() * 6) + 's';
-    container.appendChild(newParticle);
+    const liveContainer = mainChat.querySelector('.animation-container');
+    if (!liveContainer) return;
+    spawnParticle(liveContainer, 0);
   }, 2000);
 }
 
@@ -818,7 +921,6 @@ authForm.addEventListener('submit', async (e) => {
     displayAuthError(msg);
   }
 });
-switchLink.addEventListener('click', e=>{ e.preventDefault(); clearAuthError(); setLoginMode(false); });
 logoutBtn.addEventListener('click', async ()=>{
   if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
   clearAnimation();
@@ -844,7 +946,7 @@ avatarInput.addEventListener('change', async (e) => {
   } catch (err) {
     alert('Не удалось загрузить изображение. Попробуйте другой файл.');
   }
-  avatarInput.value = ''; // сбрасываем, чтобы повторный выбор того же файла тоже сработал
+  avatarInput.value = '';
 });
 saveProfileBtn.addEventListener('click', async ()=>{
   const newNick = profileNickname.value.trim() || currentUserData.nickname;
@@ -871,15 +973,218 @@ chatList.addEventListener('click', e=>{
     : type === 'group'
       ? { type: 'group', memberCount: item.dataset.memberCount }
       : { type: 'general', subtitle: id === 'support' ? 'Мы поможем с любым вопросом' : 'Открытый чат для всех' };
-  if (activeChatId !== id) {
-    activeChatId = id;
-    currentChatTitle.textContent = name;
-    subscribeToMessages(id);
-    updateChatHeaderMeta(meta);
-  }
-  refreshActiveChatHighlight();
-  if(window.innerWidth<=768) closeMobileSidebar();
+  selectChat(id, name, meta);
+  // selectChat() выходит раньше времени, если тапнули по уже активному чату
+  // (id не меняется) — но на телефоне сайдбар всё равно должен закрыться в
+  // любом случае, поэтому закрываем его отдельно, вне зависимости от того,
+  // сработала ли внутренняя логика selectChat().
+  if (window.innerWidth <= 768) closeMobileSidebar();
 });
+
+// ============ Статусы (БЕТА) — как в WhatsApp: текст/фото на 24 часа ============
+function subscribeToStatuses() {
+  if (unsubscribeStatuses) return; // уже подписаны
+  const cutoff = Timestamp.fromMillis(Date.now() - STATUS_LIFETIME_MS);
+  const qRef = query(collection(db, 'statuses'), where('createdAt', '>', cutoff), orderBy('createdAt', 'desc'));
+  unsubscribeStatuses = onSnapshot(qRef, snap => {
+    currentStatuses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (statusModal.style.display !== 'none') renderStatusModalContent();
+  }, (err) => {
+    console.error('Ошибка подписки на статусы:', err);
+  });
+  cleanupExpiredStatuses();
+  if (!statusCleanupInterval) {
+    statusCleanupInterval = setInterval(cleanupExpiredStatuses, 5 * 60 * 1000);
+  }
+}
+function stopStatusSubscription() {
+  if (unsubscribeStatuses) { unsubscribeStatuses(); unsubscribeStatuses = null; }
+  if (statusCleanupInterval) { clearInterval(statusCleanupInterval); statusCleanupInterval = null; }
+  currentStatuses = [];
+}
+async function cleanupExpiredStatuses() {
+  try {
+    const nowTs = Timestamp.fromMillis(Date.now());
+    const expiredQuery = query(collection(db, 'statuses'), where('expireAt', '<=', nowTs));
+    const snap = await getDocs(expiredQuery);
+    if (snap.empty) return;
+    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'statuses', d.id)).catch(() => {})));
+  } catch (e) {
+    console.error('Ошибка фоновой очистки просроченных статусов:', e);
+  }
+}
+
+function latestStatusPerUser(excludeSelf) {
+  const map = new Map();
+  currentStatuses.forEach(s => {
+    if (excludeSelf && s.userId === currentUser.uid) return;
+    if (!map.has(s.userId)) map.set(s.userId, s);
+  });
+  return Array.from(map.values());
+}
+
+function openStatusModal() {
+  statusModal.style.display = 'flex';
+  hideStatusAddForm();
+  subscribeToStatuses();
+  renderStatusModalContent();
+}
+function closeStatusModal() {
+  statusModal.style.display = 'none';
+}
+function renderStatusModalContent() {
+  const myLatest = currentStatuses.find(s => s.userId === currentUser.uid);
+  myStatusRow.innerHTML = '';
+  const myRow = document.createElement('div');
+  myRow.className = 'status-row my-status';
+  if (myLatest) {
+    const viewerCount = Object.keys(myLatest.viewedBy || {}).length;
+    myRow.innerHTML = `
+      <div class="status-avatar-ring"><img src="${escapeHtml(myLatest.imageUrl || currentUserData.avatarUrl || DEFAULT_AVATAR)}" alt=""></div>
+      <div class="status-info">
+        <span class="status-name">Мой статус</span>
+        <span class="status-meta">${escapeHtml(formatTime(myLatest.createdAt))} · просмотров: ${viewerCount}</span>
+      </div>`;
+    myRow.addEventListener('click', () => openStatusViewer(myLatest));
+  } else {
+    myRow.innerHTML = `
+      <div class="status-add-icon">＋</div>
+      <div class="status-info">
+        <span class="status-name">Добавить статус</span>
+        <span class="status-meta">Текст или фото, будет видно 24 часа</span>
+      </div>`;
+    myRow.addEventListener('click', () => showStatusAddForm());
+  }
+  myStatusRow.appendChild(myRow);
+
+  const others = latestStatusPerUser(true);
+  statusListEl.innerHTML = '';
+  if (others.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'search-empty';
+    empty.textContent = 'Пока никто не опубликовал статус.';
+    statusListEl.appendChild(empty);
+  } else {
+    others.forEach(s => {
+      const viewed = !!(s.viewedBy && s.viewedBy[currentUser.uid]);
+      const row = document.createElement('div');
+      row.className = 'status-row' + (viewed ? ' viewed' : '');
+      row.innerHTML = `
+        <div class="status-avatar-ring"><img src="${escapeHtml(s.imageUrl || s.userAvatarUrl || DEFAULT_AVATAR)}" alt=""></div>
+        <div class="status-info">
+          <span class="status-name">${escapeHtml(s.userName || 'Пользователь')}</span>
+          <span class="status-meta">${escapeHtml(formatTime(s.createdAt))}</span>
+        </div>`;
+      row.addEventListener('click', () => openStatusViewer(s));
+      statusListEl.appendChild(row);
+    });
+  }
+}
+
+function showStatusAddForm() {
+  statusAddForm.style.display = 'flex';
+  statusTextInput.value = '';
+  statusImageInput.value = '';
+  pendingStatusImage = '';
+  statusImagePreview.style.display = 'none';
+  statusImagePreview.src = '';
+}
+function hideStatusAddForm() {
+  statusAddForm.style.display = 'none';
+}
+
+statusImageInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('Пожалуйста, выберите файл изображения.'); statusImageInput.value = ''; return; }
+  try {
+    pendingStatusImage = await compressImage(file, 480, 480);
+    statusImagePreview.src = pendingStatusImage;
+    statusImagePreview.style.display = 'block';
+  } catch (err) {
+    alert('Не удалось загрузить изображение. Попробуйте другой файл.');
+  }
+});
+
+async function publishStatus() {
+  const text = statusTextInput.value.trim();
+  if (!text && !pendingStatusImage) { alert('Добавьте текст или фото для статуса.'); return; }
+  try {
+    await addDoc(collection(db, 'statuses'), {
+      userId: currentUser.uid,
+      userName: currentUserData.nickname || 'Пользователь',
+      userAvatarUrl: currentUserData.avatarUrl || '',
+      text: text || '',
+      imageUrl: pendingStatusImage || '',
+      viewedBy: {},
+      createdAt: serverTimestamp(),
+      expireAt: Timestamp.fromMillis(Date.now() + STATUS_LIFETIME_MS)
+    });
+  } catch (e) {
+    alert('Не удалось опубликовать статус. Попробуйте ещё раз.');
+    return;
+  }
+  hideStatusAddForm();
+}
+
+function openStatusViewer(status) {
+  statusViewer.style.display = 'flex';
+  statusViewerAvatar.src = status.userAvatarUrl || DEFAULT_AVATAR;
+  statusViewerName.textContent = status.userId === currentUser.uid ? 'Мой статус' : (status.userName || 'Пользователь');
+  statusViewerTime.textContent = formatTime(status.createdAt);
+  if (status.imageUrl) {
+    statusViewerImage.src = status.imageUrl;
+    statusViewerImage.style.display = 'block';
+  } else {
+    statusViewerImage.style.display = 'none';
+    statusViewerImage.src = '';
+  }
+  statusViewerText.textContent = status.text || '';
+
+  const isOwn = status.userId === currentUser.uid;
+  if (isOwn) {
+    statusViewerViewersWrap.style.display = 'block';
+    const entries = Object.entries(status.viewedBy || {}).sort((a, b) => {
+      const at = a[1]?.at?.toMillis ? a[1].at.toMillis() : 0;
+      const bt = b[1]?.at?.toMillis ? b[1].at.toMillis() : 0;
+      return bt - at;
+    });
+    statusViewersList.innerHTML = '';
+    if (entries.length === 0) {
+      const none = document.createElement('div');
+      none.className = 'status-viewer-viewer-item';
+      none.textContent = 'Пока никто не смотрел';
+      statusViewersList.appendChild(none);
+    } else {
+      entries.forEach(([uid, info]) => {
+        const item = document.createElement('div');
+        item.className = 'status-viewer-viewer-item';
+        item.innerHTML = `<img src="${escapeHtml(info.avatarUrl || DEFAULT_AVATAR)}" alt=""><span>${escapeHtml(info.nickname || 'Пользователь')}</span><span class="viewer-time">${escapeHtml(formatTime(info.at))}</span>`;
+        statusViewersList.appendChild(item);
+      });
+    }
+  } else {
+    statusViewerViewersWrap.style.display = 'none';
+    if (!status.viewedBy || !status.viewedBy[currentUser.uid]) {
+      updateDoc(doc(db, 'statuses', status.id), {
+        [`viewedBy.${currentUser.uid}`]: {
+          at: serverTimestamp(),
+          nickname: currentUserData.nickname || 'Пользователь',
+          avatarUrl: currentUserData.avatarUrl || ''
+        }
+      }).catch(() => { /* не критично — в следующий раз просто попробуем снова */ });
+    }
+  }
+}
+function closeStatusViewer() {
+  statusViewer.style.display = 'none';
+}
+
+statusNavBtn.addEventListener('click', openStatusModal);
+closeStatusModalBtn.addEventListener('click', closeStatusModal);
+statusCancelBtn.addEventListener('click', hideStatusAddForm);
+statusPublishBtn.addEventListener('click', publishStatus);
+statusViewerClose.addEventListener('click', closeStatusViewer);
 
 // Мобильное меню
 function openMobileSidebar() {
@@ -913,6 +1218,9 @@ onAuthStateChanged(auth, async user => {
     if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
     if(unsubscribeChatList){unsubscribeChatList();unsubscribeChatList=null;}
     if(unsubscribeHeaderPresence){unsubscribeHeaderPresence();unsubscribeHeaderPresence=null;}
+    stopStatusSubscription();
+    closeStatusModal();
+    closeStatusViewer();
     clearAnimation();
     stopPresenceHeartbeat();
     clearUserStatusListeners();
@@ -932,32 +1240,22 @@ onAuthStateChanged(auth, async user => {
 setLoginMode(true);
 
 // ============ Регистрация Service Worker + автообнаружение обновлений ============
-// Идея: при каждой замене файлов на хостинге (например, при пуше на GitHub)
-// браузер сам заметит, что sw.js изменился побайтово, скачает новую версию
-// в фоне и поставит её в режим "waiting". Мы это ловим и показываем баннер
-// с кнопкой "Обновить" — вручную сбрасывать кеш или что-либо ещё не нужно.
-let swAlreadyReloading = false; // объявлен на уровне модуля — используется и ниже, и в showUpdateBanner
+let swAlreadyReloading = false;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').then(registration => {
-      // Уже есть где-то в очереди новая версия, ждущая активации (например,
-      // человек открыл вкладку уже после того, как обновление подгрузилось)
       if (registration.waiting && navigator.serviceWorker.controller) {
         showUpdateBanner(registration);
       }
-      // Новая версия начала устанавливаться прямо сейчас, пока вкладка открыта
       registration.addEventListener('updatefound', () => {
         const newWorker = registration.installing;
         if (!newWorker) return;
         newWorker.addEventListener('statechange', () => {
-          // controller уже есть -> это не первая установка, а именно апдейт
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
             showUpdateBanner(registration);
           }
         });
       });
-      // Активная вкладка не перечитывает sw.js сама по себе часами — подстёгиваем
-      // проверку при возврате в приложение и раз в час на всякий случай.
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) registration.update().catch(() => {});
       });
@@ -968,9 +1266,6 @@ if ('serviceWorker' in navigator) {
     });
   });
 
-  // Как только новый SW реально взял управление страницей (после нашей
-  // команды SKIP_WAITING) — перезагружаем один раз, чтобы подхватить свежие
-  // index.html/app.js/style.css без ручного вмешательства пользователя.
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (swAlreadyReloading) return;
     swAlreadyReloading = true;
@@ -979,7 +1274,7 @@ if ('serviceWorker' in navigator) {
 }
 
 function showUpdateBanner(registration) {
-  if (document.querySelector('.update-banner')) return; // уже показан
+  if (document.querySelector('.update-banner')) return;
   const banner = document.createElement('div');
   banner.className = 'update-banner';
   const text = document.createElement('span');
@@ -991,10 +1286,6 @@ function showUpdateBanner(registration) {
     if (registration.waiting) registration.waiting.postMessage('SKIP_WAITING');
     btn.disabled = true;
     btn.textContent = 'Обновляем…';
-    // БАГФИКС: страховка на случай, если controllerchange по какой-то причине
-    // не сработает (например, registration.waiting неожиданно оказался пуст) —
-    // без этого кнопка зависла бы навсегда с надписью "Обновляем…", а
-    // перезагрузки так и не произошло бы.
     setTimeout(() => {
       if (!swAlreadyReloading) { swAlreadyReloading = true; window.location.reload(); }
     }, 4000);
