@@ -1,8 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<widget id="com.iskra.messenger.app" version="1.0.0" xmlns="http://w3.org">
-    <name>Искра Мессенджер</name>
-    <description>Мой официальный мессенджер</description>
-    <author>Max454prog</author>
-    <content src="index.html" />
-    <preference name="Fullscreen" value="true" />
-</widget>
