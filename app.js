@@ -283,24 +283,31 @@ function updateSidebarProfile() {
 // мобильными и десктопными браузерами и сама поворачивает пиксели по EXIF
 // перед тем как мы их нарисуем на canvas). Старый способ через Image()
 // оставлен как запасной вариант для редких браузеров без этой опции.
-function compressImage(file, maxW=200, maxH=200) {
+function compressImage(file, maxW=200, maxH=200, quality=0.7) {
   if (window.createImageBitmap) {
     return createImageBitmap(file, { imageOrientation: 'from-image' })
       .then(bitmap => {
         const canvas = document.createElement('canvas');
         let { width, height } = bitmap;
-        if (width > height) { if (width > maxW) { height *= maxW/width; width = maxW; } }
-        else { if (height > maxH) { width *= maxH/height; height = maxH; } }
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+        // БАГФИКС: раньше маленькие исходники (меньше maxW/maxH) всё равно
+        // проходили через canvas без апскейла — это не портило качество, но
+        // приводило к путанице при отладке. Явно не увеличиваем изображение,
+        // если оно и так меньше целевого размера — качество только теряется
+        // от лишнего прохода через JPEG-кодирование, а не приобретается.
+        if (width > maxW || height > maxH) {
+          if (width > height) { height *= maxW/width; width = maxW; }
+          else { width *= maxH/height; height = maxH; }
+        }
+        canvas.width = Math.round(width); canvas.height = Math.round(height);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         bitmap.close();
-        return canvas.toDataURL('image/jpeg', 0.7);
+        return canvas.toDataURL('image/jpeg', quality);
       })
-      .catch(() => compressImageLegacy(file, maxW, maxH));
+      .catch(() => compressImageLegacy(file, maxW, maxH, quality));
   }
-  return compressImageLegacy(file, maxW, maxH);
+  return compressImageLegacy(file, maxW, maxH, quality);
 }
-function compressImageLegacy(file, maxW=200, maxH=200) {
+function compressImageLegacy(file, maxW=200, maxH=200, quality=0.7) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
@@ -310,11 +317,13 @@ function compressImageLegacy(file, maxW=200, maxH=200) {
       img.onload = () => {
         const canvas = document.createElement('canvas');
         let { width, height } = img;
-        if (width > height) { if (width > maxW) { height *= maxW/width; width = maxW; } }
-        else { if (height > maxH) { width *= maxH/height; height = maxH; } }
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(img,0,0,width,height);
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
+        if (width > maxW || height > maxH) {
+          if (width > height) { height *= maxW/width; width = maxW; }
+          else { width *= maxH/height; height = maxH; }
+        }
+        canvas.width = Math.round(width); canvas.height = Math.round(height);
+        canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
       };
       img.src = e.target.result;
     };
@@ -811,7 +820,14 @@ function renderEmojiPanel() {
       if (hoverAnim) { hoverAnim.destroy(); hoverAnim = null; }
       span.textContent = emoji;
     });
-    span.addEventListener('click', () => {
+    // БАГФИКС: клик по эмодзи не останавливал всплытие события, поэтому оно
+    // долетало до document-обработчика ниже (закрывающего панель по клику
+    // вне её) и закрывало панель СРАЗУ ЖЕ, в тот же тик — запланированная
+    // ниже задержка в 150мс на анимацию "эмодзи подпрыгнул" не успевала
+    // отработать визуально, панель исчезала мгновенно. Теперь клик по
+    // эмодзи не всплывает дальше документа.
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
       span.classList.remove('emoji-pop');
       void span.offsetWidth;
       span.classList.add('emoji-pop');
@@ -982,13 +998,23 @@ chatList.addEventListener('click', e=>{
 });
 
 // ============ Статусы (БЕТА) — как в WhatsApp: текст/фото на 24 часа ============
+// БАГФИКС (главный баг статусов: свой статус не появлялся сразу после
+// публикации): раньше запрос фильтровался и сортировался по полю createdAt,
+// а оно записывается через serverTimestamp(). Пока Firestore не подтвердит
+// запись сервером, локально (оптимистично) это поле равно null — а null не
+// проходит фильтр "> cutoff", поэтому только что опубликованный статус на
+// секунду-другую пропадал из списка (а на медленной сети — заметно дольше),
+// хотя publishStatus() отработал без ошибок. Поле expireAt, наоборот,
+// вычисляется на клиенте (Timestamp.fromMillis(...)) и никогда не бывает
+// null даже до подтверждения сервером — фильтруем и сортируем по нему.
 function subscribeToStatuses() {
   if (unsubscribeStatuses) return; // уже подписаны
-  const cutoff = Timestamp.fromMillis(Date.now() - STATUS_LIFETIME_MS);
-  const qRef = query(collection(db, 'statuses'), where('createdAt', '>', cutoff), orderBy('createdAt', 'desc'));
+  const nowTs = Timestamp.fromMillis(Date.now());
+  const qRef = query(collection(db, 'statuses'), where('expireAt', '>', nowTs), orderBy('expireAt', 'desc'));
   unsubscribeStatuses = onSnapshot(qRef, snap => {
     currentStatuses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (statusModal.style.display !== 'none') renderStatusModalContent();
+    refreshOpenStatusViewer();
   }, (err) => {
     console.error('Ошибка подписки на статусы:', err);
   });
@@ -1093,12 +1119,41 @@ function hideStatusAddForm() {
   statusAddForm.style.display = 'none';
 }
 
+// БАГФИКС (лимит размера документа Firestore): один документ не может
+// превышать 1 МиБ. Качество, которое нужно для читаемого статуса (см. ниже),
+// на очень "тяжёлых" фото (например, детальный скриншот с мелким текстом)
+// иногда даёт base64-строку в сотни килобайт и может подойти к лимиту.
+// Раньше это привело бы к тому, что publishStatus() падал с общей ошибкой
+// "Не удалось опубликовать статус" уже ПОСЛЕ того, как пользователь заполнил
+// форму — неприятный сюрприз в самом конце. Теперь если сжатая картинка
+// всё ещё слишком большая, мы автоматически пересжимаем её ступенчато с
+// понижением качества/размера, пока она не влезет в безопасный лимит.
+const STATUS_IMAGE_SAFE_BYTES = 700 * 1024; // запас под остальные поля документа
+async function compressImageForStatus(file) {
+  const attempts = [
+    [1280, 1280, 0.9],
+    [1280, 1280, 0.75],
+    [960, 960, 0.7],
+    [720, 720, 0.65]
+  ];
+  let result = null;
+  for (const [w, h, q] of attempts) {
+    result = await compressImage(file, w, h, q);
+    if (result.length <= STATUS_IMAGE_SAFE_BYTES) return result;
+  }
+  return result; // если совсем не влезло — вернём самый лёгкий вариант, publishStatus сам сообщит об ошибке
+}
 statusImageInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   if (!file.type.startsWith('image/')) { alert('Пожалуйста, выберите файл изображения.'); statusImageInput.value = ''; return; }
   try {
-    pendingStatusImage = await compressImage(file, 480, 480);
+    // БАГФИКС (качество картинок в статусах): раньше фото в статусах сжималось
+    // до 480×480 с качеством JPEG 0.7 — этого хватало для аватара, но для
+    // статуса (где часто фотографируют текст, скриншоты, афиши) этого было
+    // мало: буквы превращались в кашу. Теперь для статусов используем до
+    // 1280×1280 и качество до 0.9 — заметно чётче, текст на фото читается.
+    pendingStatusImage = await compressImageForStatus(file);
     statusImagePreview.src = pendingStatusImage;
     statusImagePreview.style.display = 'block';
   } catch (err) {
@@ -1127,7 +1182,10 @@ async function publishStatus() {
   hideStatusAddForm();
 }
 
+let openStatusViewerId = null; // id статуса, который сейчас открыт в просмотрщике (для живого обновления)
 function openStatusViewer(status) {
+  const isReopen = openStatusViewerId === status.id;
+  openStatusViewerId = status.id;
   statusViewer.style.display = 'flex';
   statusViewerAvatar.src = status.userAvatarUrl || DEFAULT_AVATAR;
   statusViewerName.textContent = status.userId === currentUser.uid ? 'Мой статус' : (status.userName || 'Пользователь');
@@ -1165,7 +1223,16 @@ function openStatusViewer(status) {
     }
   } else {
     statusViewerViewersWrap.style.display = 'none';
-    if (!status.viewedBy || !status.viewedBy[currentUser.uid]) {
+    // БАГФИКС (дублирующиеся записи о просмотре): раньше эта запись отправлялась
+    // при каждом вызове openStatusViewer(), а после добавления живого обновления
+    // (refreshOpenStatusViewer) эта функция стала вызываться повторно, пока окно
+    // просмотра открыто. Из-за задержки между отправкой updateDoc() и приходом
+    // подтверждённых данных обратно через onSnapshot поле status.viewedBy ещё
+    // какое-то время оставалось "старым", и условие ниже могло сработать
+    // повторно — в базу летело несколько записей о просмотре одного и того же
+    // человека подряд. Теперь при повторном открытии/обновлении уже открытого
+    // статуса запись не отправляется повторно.
+    if (!isReopen && (!status.viewedBy || !status.viewedBy[currentUser.uid])) {
       updateDoc(doc(db, 'statuses', status.id), {
         [`viewedBy.${currentUser.uid}`]: {
           at: serverTimestamp(),
@@ -1177,7 +1244,23 @@ function openStatusViewer(status) {
   }
 }
 function closeStatusViewer() {
+  openStatusViewerId = null;
   statusViewer.style.display = 'none';
+}
+// БАГФИКС (статусы не обновлялись в реальном времени во время просмотра):
+// раньше при обновлении подписки (кто-то новый посмотрел статус, счётчик
+// "просмотров: N" должен вырасти) обновлялось только содержимое модалки со
+// списком статусов, но НЕ уже открытое окно просмотра. Владелец статуса
+// видел устаревшее число просмотров, пока не закрывал и не открывал окно
+// заново. Также если статус истёк (или его удалили) прямо во время
+// просмотра — окно раньше просто продолжало показывать protuhший статус.
+// Теперь окно просмотра само подхватывает актуальные данные при каждом
+// обновлении подписки на статусы.
+function refreshOpenStatusViewer() {
+  if (!openStatusViewerId || statusViewer.style.display === 'none') return;
+  const fresh = currentStatuses.find(s => s.id === openStatusViewerId);
+  if (!fresh) { closeStatusViewer(); return; }
+  openStatusViewer(fresh);
 }
 
 statusNavBtn.addEventListener('click', openStatusModal);
