@@ -32,6 +32,8 @@ const authError = document.getElementById('auth-error');
 const loginBtn = document.getElementById('login-btn');
 const registerBtn = document.getElementById('register-btn');
 const authToggle = document.getElementById('auth-toggle');
+const appVersionAuthEl = document.getElementById('app-version-auth');
+const appVersionSidebarEl = document.getElementById('app-version-sidebar');
 const messagesContainer = document.getElementById('messages-container');
 const messagesList = document.getElementById('messages-list');
 const messageForm = document.getElementById('message-form');
@@ -117,6 +119,12 @@ let pendingStatusImage = ''; // сжатое изображение перед �
 let statusCleanupInterval = null;
 
 const STATUS_LIFETIME_MS = 24 * 60 * 60 * 1000;
+
+// ============ Версия приложения ============
+const APP_VERSION = '10.0.9';
+const versionLabel = `Версия Искры ${APP_VERSION}`;
+if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
+if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
 
 // ============ Splash screen ============
 let splashMinTimeDone = false;

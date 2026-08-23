@@ -124,6 +124,10 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 .auth-toggle { text-align:center; font-size:0.88rem; color:var(--text-secondary); }
 .auth-toggle a { color:var(--accent-1); text-decoration:none; font-weight:600; }
 
+/* Номер версии приложения — виден на экране входа и внизу боковой панели */
+.app-version { display:block; text-align:center; font-size:0.72rem; color:var(--text-tertiary); margin-top:14px; letter-spacing:0.02em; }
+#app-version-sidebar { margin-top:2px; }
+
 /* ============ Chat layout ============ */
 #chat-screen { flex-direction:column; }
 .chat-layout { display:flex; height:100%; overflow:hidden; position:relative; }
@@ -212,22 +216,6 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 .message.own .message-header { flex-direction:row-reverse; }
 .message-username { font-weight:600; color:var(--accent-1); }
 .message-time { font-size:0.7rem; opacity:0.8; }
-
-.msg-menu-btn {
-  background:none; border:none; color:var(--text-tertiary); cursor:pointer; font-size:1rem;
-  line-height:1; padding:2px 6px; border-radius:6px; opacity:0; transition:opacity var(--transition), background var(--transition);
-}
-@media (hover:none) { .msg-menu-btn { opacity:0.6; } } /* на тач-экранах hover не сработает — показываем сразу, но приглушённо */
-
-.msg-context-menu {
-  position:fixed; background:var(--bg-elevated); border:1px solid var(--border-strong); border-radius:var(--radius-sm);
-  box-shadow:var(--shadow-soft); z-index:500; display:flex; flex-direction:column; min-width:170px; overflow:hidden;
-}
-.msg-context-menu button {
-  background:none; border:none; color:var(--text-primary); text-align:left; padding:10px 14px; font-size:0.88rem;
-  cursor:pointer; transition:background var(--transition);
-}
-.msg-context-menu button.danger { color:#ff6b6b; }
 
 .message-bubble {
   padding:10px 15px; border-radius:19px; font-size:0.95rem; line-height:1.45;
@@ -389,21 +377,15 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 
 /* На устройствах без реальной мыши (тач-экраны, то есть почти все телефоны)
    не применяем hover-эффекты, чтобы они не "залипали" после тапа — они
-   предназначены только для ПК/ноутбуков.
-   БАГФИКС (совместимость с телефоном, доведено до конца): раньше в этот блок
-   было вынесено только 2 правила (.chat-item:hover и .message-bubble.emoji-
-   only:hover), а почти все ОСТАЛЬНЫЕ :hover-стили в файле — на кнопках
-   (.btn-primary, .btn-secondary, .btn-logout, .btn-profile, .btn-icon-profile,
-   .icon-btn, .emoji-btn, .btn-send), на ссылках (.auth-toggle a,
-   .message-bubble a), на элементах списков (.status-row, .search-result-item,
-   .emoji-panel span, .staged-chip button, .msg-menu-btn, .msg-context-menu
-   button) и на баннере обновления (.update-banner button) — оставались вне
-   этого правила и продолжали "залипать" после тапа на телефоне (кнопка
-   остаётся подсвеченной/увеличенной, пока не тапнешь в другое место). Теперь
-   абсолютно все hover-эффекты приложения одинаково ограничены только
-   устройствами с настоящей мышью — на телефоне их просто нет, и ничего не
-   залипает. Активное нажатие на кнопки по-прежнему видно через `.btn:active`
-   (срабатывает и на тач-экранах). */
+   предназначены только для ПК/ноутбуков. Ограничены все hover-стили файла:
+   на кнопках (.btn-primary, .btn-secondary, .btn-logout, .btn-profile,
+   .btn-icon-profile, .icon-btn, .emoji-btn, .btn-send), на ссылках
+   (.auth-toggle a, .message-bubble a), на элементах списков (.status-row,
+   .search-result-item, .emoji-panel span, .staged-chip button) и на баннере
+   обновления (.update-banner button) — без этого ограничения кнопка на
+   телефоне оставалась бы подсвеченной/увеличенной после тапа, пока не
+   тапнешь в другое место. Активное нажатие по-прежнему видно через
+   `.btn:active` (срабатывает и на тач-экранах). */
 @media (hover:hover) and (pointer:fine) {
   .btn-primary:hover { filter:brightness(1.08); box-shadow:0 8px 22px rgba(124,108,255,0.4); }
   .btn-secondary:hover { background:rgba(157,139,255,0.1); border-color:var(--accent-1); }
@@ -412,9 +394,6 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
   .btn-logout:hover { background:rgba(255,92,114,0.2); }
   .btn-profile:hover { background:var(--bg-hover); border-color:var(--border-strong); }
   .btn-icon-profile:hover { background:var(--bg-hover); border-color:var(--border-strong); }
-  .message:hover .msg-menu-btn { opacity:1; }
-  .msg-menu-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
-  .msg-context-menu button:hover { background:var(--bg-hover); }
   .message-bubble a:hover { color:#c3d7ff; }
   .emoji-btn:hover { background:var(--bg-hover); }
   .btn-send:hover { filter:brightness(1.08); }
