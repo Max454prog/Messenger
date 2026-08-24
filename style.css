@@ -251,6 +251,17 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
   padding-bottom:calc(16px + env(safe-area-inset-bottom));
 }
 
+/* Чат поддержки: только чтение (новости/обновления/фиксы) — вместо формы
+   ввода показываем пояснение того же вида, что и форма, чтобы макет не
+   "прыгал" при переключении между чатами. */
+.composer-locked-notice {
+  display:none; align-items:center; justify-content:center; gap:8px; text-align:center;
+  padding:16px 22px; padding-bottom:calc(16px + env(safe-area-inset-bottom));
+  background:rgba(25,25,40,0.85); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  border-top:1px solid var(--border); z-index:2; color:var(--text-tertiary); font-size:0.85rem; line-height:1.4;
+}
+.composer-locked-notice.show { display:flex; }
+
 .message.system-message { align-self:center; max-width:80%; }
 .system-bubble {
   background:rgba(157,139,255,0.12); border:1px solid rgba(157,139,255,0.3);
@@ -492,4 +503,40 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }
+}
+
+/* ============ Оптимизация для слабых ПК/ноутбуков и телефонов ============
+   Класс .low-power ставится в app.js на <html> для устройств с малым числом
+   ядер CPU/памяти, для тач-устройств (телефоны) и при системной настройке
+   "меньше анимаций". backdrop-filter — один из самых дорогих CSS-эффектов
+   по нагрузке на GPU, особенно на слабых чипах, поэтому именно его в первую
+   очередь урезаем; сами интерфейсы остаются читаемыми. */
+.low-power .auth-container { backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
+.low-power .chat-header,
+.low-power .message-form,
+.low-power .composer-locked-notice,
+.low-power .status-viewer-viewers { backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+.low-power .modal { backdrop-filter:blur(2px); }
+.low-power .splash-orb { filter:blur(6px); }
+.low-power .message,
+.low-power .message-bubble.emoji-only { animation-duration:0.15s; }
+
+/* ============ Статусы: раскладка под ПК/ноутбуки ============ */
+@media (min-width:1000px) {
+  #status-modal .modal-content { max-width:640px; }
+  #status-modal .status-list {
+    max-height:56vh; display:grid; grid-template-columns:repeat(2, 1fr); gap:2px 18px;
+  }
+  #status-modal .status-row .status-avatar-ring,
+  #status-modal .status-row .status-add-icon { width:58px; height:58px; }
+}
+
+/* ============ Статусы: крупнее и шире картинки на смартфонах ============ */
+@media (max-width:768px) {
+  #status-modal .modal-content-wide { width:96%; max-width:none; padding:22px 16px; }
+  .status-image-preview { max-height:260px; }
+  .status-viewer-content { padding:16px; }
+  .status-viewer-content img { max-width:100%; width:100%; max-height:74vh; }
+  .status-row .status-avatar-ring,
+  .status-row .status-add-icon { width:60px; height:60px; }
 }

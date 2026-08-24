@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=10.0.10">
 </head>
 <body>
 
@@ -133,7 +133,7 @@
               <span class="chat-icon">🛟</span>
               <div class="chat-item-text">
                 <span class="chat-name">Чат поддержки</span>
-                <span class="chat-preview">Мы всегда на связи</span>
+                <span class="chat-preview">Новости и обновления приложения</span>
               </div>
             </li>
           </ul>
@@ -179,6 +179,9 @@
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M3 11.5 20.5 3 12 20.5l-2.4-7.1L3 11.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
             </button>
           </form>
+          <div class="composer-locked-notice" id="composer-locked-notice">
+            📢 Здесь публикуются новости, обновления и исправления приложения. Отправка сообщений недоступна — только чтение.
+          </div>
         </main>
       </div>
     </div>
@@ -317,7 +320,11 @@
       }
     }
   </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+  <!-- lottie-web больше не грузится здесь блокирующим тегом: он весит
+       ощутимо и не нужен для старта приложения, только для анимации эмодзи
+       по наведению. На слабых ПК/ноутбуках и на телефонах (где ховера нет
+       вовсе) это лишняя нагрузка на старте — теперь app.js подгружает
+       lottie-web динамически и только тогда, когда он реально понадобится. -->
   <script type="module" src="app.js"></script>
 </body>
 </html>

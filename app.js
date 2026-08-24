@@ -38,6 +38,7 @@ const messagesContainer = document.getElementById('messages-container');
 const messagesList = document.getElementById('messages-list');
 const messageForm = document.getElementById('message-form');
 const messageInput = document.getElementById('message-input');
+const composerLockedNotice = document.getElementById('composer-locked-notice');
 const logoutBtn = document.getElementById('logout-btn');
 const profileBtn = document.getElementById('profile-btn');
 const profileModal = document.getElementById('profile-modal');
@@ -121,10 +122,58 @@ let statusCleanupInterval = null;
 const STATUS_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 // ============ Версия приложения ============
-const APP_VERSION = '10.0.9';
+const APP_VERSION = '10.0.10';
 const versionLabel = `Версия Искры ${APP_VERSION}`;
 if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
 if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
+
+// ============ Оптимизация для слабых ПК/ноутбуков и телефонов ============
+// Определяем один раз при загрузке, "слабое" ли устройство: мало ядер CPU,
+// мало оперативной памяти, тач-экран (телефоны/планшеты — там всегда нет
+// ховера, и обычно GPU слабее, чем у настольного ПК) или системная настройка
+// "уменьшить анимации". По этому классу CSS сам снижает интенсивность самых
+// дорогих эффектов (backdrop-filter blur и т.п.), а JS ниже уменьшает число
+// частиц фоновой анимации — так одна и та же кодовая база остаётся плавной
+// и на мощном ПК, и на бюджетном телефоне.
+const isTouchDevice = window.matchMedia('(hover:none), (pointer:coarse)').matches;
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const isLowPowerDevice = isTouchDevice || prefersReducedMotion
+  || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
+  || (navigator.deviceMemory && navigator.deviceMemory <= 4);
+if (isLowPowerDevice) document.documentElement.classList.add('low-power');
+
+// lottie-web грузим лениво: он нужен только для анимации эмодзи по наведению
+// (актуально на ПК/ноутбуках с мышью), а весит ощутимо — на слабых
+// устройствах и телефонах (где наведения нет вовсе) незачем тратить на него
+// память и время CPU при каждом старте приложения.
+let lottieLoadPromise = null;
+function loadLottieForce() {
+  if (window.lottie) return Promise.resolve(true);
+  if (!lottieLoadPromise) {
+    lottieLoadPromise = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  }
+  return lottieLoadPromise;
+}
+function ensureLottieLoaded() {
+  if (isTouchDevice) return Promise.resolve(false); // на тач-устройствах ховера нет — не грузим вообще
+  return loadLottieForce();
+}
+
+// ============ Чат поддержки: только чтение ============
+// В чате поддержки теперь публикуются новости, обновления и исправления —
+// это односторонний канал информации, писать туда нельзя.
+const SUPPORT_CHAT_ID = 'support';
+function updateComposerAccess(chatId) {
+  const locked = chatId === SUPPORT_CHAT_ID;
+  messageForm.style.display = locked ? 'none' : 'flex';
+  composerLockedNotice.classList.toggle('show', locked);
+}
 
 // ============ Splash screen ============
 let splashMinTimeDone = false;
@@ -198,8 +247,11 @@ function renderAnimatedEmoji(container, emoji, { loop = false } = {}) {
   }
   container.textContent = emoji;
   const codepoint = emojiToNotoCodepoint(emoji);
-  getEmojiLottie(codepoint).then(data => {
-    if (data && window.lottie && container.isConnected) {
+  // Эта анимация — сама суть крупных emoji-only сообщений (не только hover-эффект),
+  // поэтому здесь lottie грузим всегда, включая телефоны — в отличие от
+  // подсветки эмодзи в панели наведением, которая на тач-экранах вообще не нужна.
+  Promise.all([getEmojiLottie(codepoint), loadLottieForce()]).then(([data, ok]) => {
+    if (data && ok && window.lottie && container.isConnected) {
       container.textContent = '';
       container._lottieInstance = lottie.loadAnimation({ container, renderer: 'svg', loop, autoplay: true, animationData: data });
     }
@@ -542,6 +594,7 @@ function selectChat(chatId, title, meta) {
   currentChatTitle.textContent = title;
   subscribeToMessages(chatId);
   updateChatHeaderMeta(meta || { type: 'general' });
+  updateComposerAccess(chatId);
   refreshActiveChatHighlight();
   if (window.innerWidth <= 768) closeMobileSidebar();
 }
@@ -758,6 +811,10 @@ function addMessageToUI(id, data) {
 }
 async function sendMessage(text) {
   if (!currentUser || !currentUserData) return;
+  // Чат поддержки — read-only канал новостей/обновлений: запрет на отправку
+  // продублирован здесь (а не только скрытием формы), чтобы писать в него
+  // было нельзя в принципе, независимо от того, как вызвана функция.
+  if (activeChatId === SUPPORT_CHAT_ID) return;
   const trimmed = text.trim();
   if (!trimmed) return;
 
@@ -817,8 +874,11 @@ function renderEmojiPanel() {
     let hoverAnim = null;
     span.addEventListener('mouseenter', () => {
       const codepoint = emojiToNotoCodepoint(emoji);
-      getEmojiLottie(codepoint).then(data => {
-        if (data && window.lottie && span.matches(':hover')) {
+      // На тач-устройствах ensureLottieLoaded() ничего не грузит (там нет
+      // ховера — событие mouseenter туда и не долетит), lottie-web
+      // подтягивается лениво только на ПК/ноутбуках при первом наведении.
+      Promise.all([getEmojiLottie(codepoint), ensureLottieLoaded()]).then(([data, ok]) => {
+        if (data && ok && window.lottie && span.matches(':hover')) {
           span.textContent = '';
           hoverAnim = lottie.loadAnimation({ container: span, renderer: 'svg', loop: true, autoplay: true, animationData: data });
         }
@@ -871,9 +931,31 @@ function clearAnimation() {
 // в DOM-дереве элементов, что нагружало CPU/GPU и заметно сажало батарею —
 // особенно на телефонах, где ресурсов меньше, чем на ноутбуке/десктопе.
 // Теперь каждая частица сама удаляет себя из DOM по событию 'animationend'.
+// БАГФИКС (стабильность на слабых ПК/ноутбуках и телефонах): фоновая
+// анимация не должна тратить CPU/GPU, пока вкладка свёрнута/не видна —
+// раньше setInterval продолжал плодить частицы и в фоне, впустую нагружая
+// систему и сажая батарею. Теперь при уходе со вкладки анимация полностью
+// останавливается, а при возврате — восстанавливается с текущими настройками.
+let animationPausedByVisibility = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (animationInterval) {
+      clearInterval(animationInterval);
+      animationInterval = null;
+      animationPausedByVisibility = true;
+    }
+  } else if (animationPausedByVisibility) {
+    animationPausedByVisibility = false;
+    if (currentUserData) startAnimation(currentUserData.animation || 'none');
+  }
+});
+
 function startAnimation(type) {
   clearAnimation();
-  if (type === 'none') return;
+  // При системной настройке "уменьшить анимации" фоновые частицы вообще не
+  // запускаем — это явный сигнал пользователя не тратить ресурсы на подобные
+  // эффекты, а не только сделать их короче.
+  if (type === 'none' || document.hidden || prefersReducedMotion) return;
   const container = document.createElement('div');
   container.className = 'animation-container';
   mainChat.appendChild(container);
@@ -888,7 +970,12 @@ function startAnimation(type) {
     targetContainer.appendChild(particle);
   }
 
-  const count = type === 'rain' ? 40 : 20;
+  // На слабых устройствах (см. isLowPowerDevice выше) частиц меньше и
+  // спавнятся они реже — ощутимо снижает нагрузку на CPU/GPU там, где это
+  // критичнее всего, оставляя эффект достаточно заметным визуально.
+  const baseCount = type === 'rain' ? 40 : 20;
+  const count = isLowPowerDevice ? Math.round(baseCount / 2) : baseCount;
+  const spawnIntervalMs = isLowPowerDevice ? 3200 : 2000;
   for (let i = 0; i < count; i++) {
     spawnParticle(container, Math.random() * 5);
   }
@@ -896,7 +983,7 @@ function startAnimation(type) {
     const liveContainer = mainChat.querySelector('.animation-container');
     if (!liveContainer) return;
     spawnParticle(liveContainer, 0);
-  }, 2000);
+  }, spawnIntervalMs);
 }
 
 // Настройки
@@ -996,7 +1083,7 @@ chatList.addEventListener('click', e=>{
     ? { type: 'private', otherUid: item.dataset.otherUid }
     : type === 'group'
       ? { type: 'group', memberCount: item.dataset.memberCount }
-      : { type: 'general', subtitle: id === 'support' ? 'Мы поможем с любым вопросом' : 'Открытый чат для всех' };
+      : { type: 'general', subtitle: id === 'support' ? 'Новости, обновления и исправления' : 'Открытый чат для всех' };
   selectChat(id, name, meta);
   // selectChat() выходит раньше времени, если тапнули по уже активному чату
   // (id не меняется) — но на телефоне сайдбар всё равно должен закрыться в
@@ -1320,6 +1407,7 @@ onAuthStateChanged(auth, async user => {
     activeChatId = 'general';
     currentChatTitle.textContent = 'Общий чат';
     updateChatHeaderMeta({ type: 'general' });
+    updateComposerAccess('general');
     document.querySelectorAll('.chat-item').forEach(i=>i.classList.toggle('active', i.dataset.chatId==='general'));
     messagesList.innerHTML='';
     showScreen(authScreen);
