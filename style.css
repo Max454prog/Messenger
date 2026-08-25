@@ -1,4 +1,25 @@
-* { margin:0; padding:0; box-sizing:border-box; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+/* БАГФИКС: синяя/серая подсветка при тапе по кнопкам и другим интерактивным
+   элементам на мобильных браузерах (особенно Android Chrome) — это системный
+   -webkit-tap-highlight-color, который раньше нигде не был сброшен. Также
+   убираем стандартный синий outline браузера при клике мышью, но сохраняем
+   его при навигации с клавиатуры (:focus-visible) — это важно для
+   доступности и не является тем "выделением", которое мешает на тачах. */
+button, .btn, .icon-btn, .mode-btn, .chat-item, .status-nav-btn, .status-row,
+.emoji-panel span, .search-result-item, .staged-chip button, a, input, select, textarea {
+  -webkit-tap-highlight-color:transparent;
+}
+button:focus, .btn:focus, .icon-btn:focus, .mode-btn:focus, .chat-item:focus,
+.status-nav-btn:focus, .status-row:focus, .emoji-panel span:focus,
+.search-result-item:focus, .staged-chip button:focus {
+  outline:none;
+}
+button:focus-visible, .btn:focus-visible, .icon-btn:focus-visible, .mode-btn:focus-visible,
+.chat-item:focus-visible, .status-nav-btn:focus-visible, .status-row:focus-visible,
+.search-result-item:focus-visible {
+  outline:2px solid var(--accent-solid); outline-offset:2px;
+}
 
 :root {
   --bg-app:#0b0b16;

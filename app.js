@@ -605,6 +605,14 @@ function updateChatHeaderMeta(meta) {
     chatHeaderAvatarWrap.style.display = 'flex';
     chatHeaderStatusDot.dataset.uid = meta.otherUid;
     chatHeaderStatusDot.classList.remove('online');
+    // БАГФИКС: раньше при переключении на личный чат аватар и подзаголовок
+    // ("N участников" / "не в сети" от предыдущего чата) на мгновение
+    // оставались от прошлого выбранного чата, пока не придёт первый ответ
+    // onSnapshot — на медленной сети это было заметно. Теперь сбрасываем их
+    // сразу же, синхронно, ещё до прихода данных.
+    chatHeaderAvatar.src = DEFAULT_AVATAR;
+    chatHeaderSub.textContent = '…';
+    chatHeaderSub.classList.remove('offline');
     unsubscribeHeaderPresence = onSnapshot(doc(db, 'users', meta.otherUid), snap => {
       const data = snap.exists() ? snap.data() : {};
       chatHeaderAvatar.src = data.avatarUrl || DEFAULT_AVATAR;
