@@ -122,7 +122,7 @@ let statusCleanupInterval = null;
 const STATUS_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 // ============ Версия приложения ============
-const APP_VERSION = '10.0.10';
+const APP_VERSION = '10.0.11';
 const versionLabel = `Версия Искры ${APP_VERSION}`;
 if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
 if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
