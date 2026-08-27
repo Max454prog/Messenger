@@ -58,6 +58,18 @@ const settingsModal = document.getElementById('settings-modal');
 const animationSelect = document.getElementById('animation-select');
 const saveSettingsBtn = document.getElementById('save-settings');
 const closeSettingsBtn = document.getElementById('close-settings');
+const settingsTabChatBtn = document.getElementById('settings-tab-chat-btn');
+const settingsTabUpdateBtn = document.getElementById('settings-tab-update-btn');
+const settingsTabChatPanel = document.getElementById('settings-tab-chat');
+const settingsTabUpdatePanel = document.getElementById('settings-tab-update');
+const updateStatusCard = document.getElementById('update-status-card');
+const updateStatusIcon = document.getElementById('update-status-icon');
+const updateStatusTitle = document.getElementById('update-status-title');
+const updateStatusSubtitle = document.getElementById('update-status-subtitle');
+const checkUpdateBtn = document.getElementById('check-update-btn');
+const updateAllBtn = document.getElementById('update-all-btn');
+const updateListEl = document.getElementById('update-list');
+const settingsUpdateDot = document.getElementById('settings-update-dot');
 const mainChat = document.getElementById('main-chat');
 const sidebar = document.getElementById('sidebar');
 const sidebarScrim = document.getElementById('sidebar-scrim');
@@ -137,10 +149,60 @@ const TYPING_STALE_MS = 8000; // на случай если чужая вкла�
 const TYPING_KEEPALIVE_MS = 4000; // обновление метки времени, пока человек печатает без пауз дольше TYPING_STALE_MS
 
 // ============ Версия приложения ============
-const APP_VERSION = '10.1.3';
+const APP_VERSION = '10.2.0';
 const versionLabel = `Версия Искры ${APP_VERSION}`;
 if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
 if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
+
+// ============ История обновлений (для вкладки "Обновление и безопасность") ============
+// Пополняется вручную при каждом релизе — одной строкой выше по версии.
+// Отображается в настройках как накопленный список уже установленных обновлений;
+// самая свежая запись должна совпадать с APP_VERSION.
+const UPDATE_CHANGELOG = [
+  {
+    version: '10.2.0',
+    date: '28.08.2026',
+    notes: [
+      'Новая вкладка «Обновление и безопасность» в настройках',
+      'Ручная проверка обновлений и установка всех накопленных обновлений одним нажатием',
+      'История обновлений теперь хранится в приложении, а не только во всплывающем баннере'
+    ]
+  },
+  {
+    version: '10.1.3',
+    date: '—',
+    notes: [
+      'Повышена стабильность статусов «в сети» / «не в сети»',
+      'Быстрый повторный запрос статуса при обрыве связи вместо ожидания следующего тика',
+      'Статус «офлайн» теперь дублируется при закрытии вкладки на iOS и мобильных браузерах',
+      'Статус «в сети» при восстановлении соединения отправляется мгновенно'
+    ]
+  },
+  {
+    version: '10.1.2',
+    date: '—',
+    notes: [
+      'Ускорен запуск приложения: анимация эмодзи (lottie-web) теперь загружается только при реальной необходимости'
+    ]
+  },
+  {
+    version: '10.1.1',
+    date: '—',
+    notes: [
+      'Добавлены фоновые анимации чата: сакура, дождь, листья',
+      'Исправлены мелкие ошибки в групповых чатах'
+    ]
+  },
+  {
+    version: '10.1.0',
+    date: '—',
+    notes: [
+      'Добавлены статусы (бета) — фото и текст на 24 часа',
+      'Добавлено создание групповых чатов',
+      'Добавлен поиск собеседников по никнейму, email или телефону'
+    ]
+  }
+];
 
 // ============ Оптимизация для слабых ПК/ноутбуков и телефонов ============
 // Определяем один раз при загрузке, "слабое" ли устройство: мало ядер CPU,
@@ -1208,8 +1270,20 @@ async function applyCurrentAnimation() {
   animationSelect.value = anim;
   startAnimation(anim);
 }
+function setSettingsTab(tab) {
+  const isUpdateTab = tab === 'update';
+  settingsTabChatBtn.classList.toggle('active', !isUpdateTab);
+  settingsTabUpdateBtn.classList.toggle('active', isUpdateTab);
+  settingsTabChatPanel.style.display = isUpdateTab ? 'none' : 'flex';
+  settingsTabUpdatePanel.style.display = isUpdateTab ? 'flex' : 'none';
+  if (isUpdateTab) renderUpdateTab();
+}
+settingsTabChatBtn.addEventListener('click', () => setSettingsTab('chat'));
+settingsTabUpdateBtn.addEventListener('click', () => setSettingsTab('update'));
+
 settingsBtn.addEventListener('click', () => {
   animationSelect.value = currentUserData.animation || 'none';
+  setSettingsTab('chat');
   settingsModal.style.display = 'flex';
 });
 closeSettingsBtn.addEventListener('click', () => settingsModal.style.display = 'none');
@@ -1639,18 +1713,22 @@ setLoginMode(true);
 
 // ============ Регистрация Service Worker + автообнаружение обновлений ============
 let swAlreadyReloading = false;
+let swRegistration = null;      // текущая регистрация SW — нужна вкладке "Обновление и безопасность"
+let updateAvailable = false;    // есть ли скачанное и готовое к установке обновление
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').then(registration => {
+      swRegistration = registration;
       if (registration.waiting && navigator.serviceWorker.controller) {
-        showUpdateBanner(registration);
+        onUpdateAvailable(registration);
       }
       registration.addEventListener('updatefound', () => {
         const newWorker = registration.installing;
         if (!newWorker) return;
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            showUpdateBanner(registration);
+            onUpdateAvailable(registration);
           }
         });
       });
@@ -1671,6 +1749,30 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// Вызывается, когда браузер скачал и подготовил новую версию приложения
+// (SW встал в состояние "waiting"). Показывает всплывающий баннер, зажигает
+// точку-уведомление на шестерёнке настроек и обновляет вкладку
+// "Обновление и безопасность", если она сейчас открыта.
+function onUpdateAvailable(registration) {
+  updateAvailable = true;
+  showUpdateBanner(registration);
+  if (settingsUpdateDot) settingsUpdateDot.style.display = 'block';
+  if (settingsTabUpdatePanel && settingsTabUpdatePanel.style.display !== 'none') {
+    renderUpdateTab();
+  }
+}
+
+// Активирует скачанное обновление и перезагружает страницу. Общая точка
+// входа и для баннера, и для кнопок во вкладке настроек.
+function applyPendingUpdate(onStart) {
+  if (!swRegistration || !swRegistration.waiting) return;
+  if (onStart) onStart();
+  swRegistration.waiting.postMessage('SKIP_WAITING');
+  setTimeout(() => {
+    if (!swAlreadyReloading) { swAlreadyReloading = true; window.location.reload(); }
+  }, 4000);
+}
+
 function showUpdateBanner(registration) {
   if (document.querySelector('.update-banner')) return;
   const banner = document.createElement('div');
@@ -1681,14 +1783,157 @@ function showUpdateBanner(registration) {
   btn.type = 'button';
   btn.textContent = 'Обновить';
   btn.addEventListener('click', () => {
-    if (registration.waiting) registration.waiting.postMessage('SKIP_WAITING');
-    btn.disabled = true;
-    btn.textContent = 'Обновляем…';
-    setTimeout(() => {
-      if (!swAlreadyReloading) { swAlreadyReloading = true; window.location.reload(); }
-    }, 4000);
+    applyPendingUpdate(() => {
+      btn.disabled = true;
+      btn.textContent = 'Обновляем…';
+    });
   });
   banner.appendChild(text);
   banner.appendChild(btn);
   document.body.insertBefore(banner, document.body.firstChild);
 }
+
+// ============ Вкладка настроек "Обновление и безопасность" ============
+let updateTabChecking = false;
+const openUpdateItemVersions = new Set(); // какие карточки сейчас развёрнуты — сохраняем между перерисовками
+
+function renderUpdateTab() {
+  if (!updateStatusCard) return;
+
+  updateStatusCard.classList.toggle('checking', updateTabChecking);
+  updateStatusCard.classList.toggle('has-update', updateAvailable);
+  updateStatusIcon.textContent = updateTabChecking ? '🔄' : (updateAvailable ? '⬇️' : '🛡️');
+  updateStatusTitle.textContent = `Версия Искры ${APP_VERSION}`;
+  if (updateTabChecking) {
+    updateStatusSubtitle.textContent = 'Проверяем наличие обновлений…';
+  } else if (updateAvailable) {
+    updateStatusSubtitle.textContent = 'Найдено обновление, готово к установке';
+  } else {
+    updateStatusSubtitle.textContent = 'У вас установлена последняя версия';
+  }
+  checkUpdateBtn.disabled = updateTabChecking;
+  checkUpdateBtn.textContent = updateTabChecking ? 'Проверяем…' : 'Проверить обновления';
+  updateAllBtn.disabled = !updateAvailable;
+
+  updateListEl.innerHTML = '';
+
+  if (updateAvailable) {
+    updateListEl.appendChild(buildUpdateItem({
+      version: null,
+      date: 'Сегодня',
+      notes: ['Новая версия «Искры» скачана и готова к установке.', 'Полный список изменений появится в истории после установки.'],
+      pending: true
+    }));
+  }
+
+  UPDATE_CHANGELOG.forEach(entry => {
+    updateListEl.appendChild(buildUpdateItem({
+      version: entry.version,
+      date: entry.date,
+      notes: entry.notes,
+      pending: false
+    }));
+  });
+
+  if (!updateListEl.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'update-empty';
+    empty.textContent = 'История обновлений пока пуста.';
+    updateListEl.appendChild(empty);
+  }
+}
+
+function buildUpdateItem({ version, date, notes, pending }) {
+  const key = pending ? 'pending' : version;
+  const item = document.createElement('div');
+  item.className = 'update-item' + (pending ? ' pending' : '');
+  if (openUpdateItemVersions.has(key)) item.classList.add('open');
+
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'update-item-header';
+
+  const info = document.createElement('div');
+  info.className = 'update-item-info';
+  const versionRow = document.createElement('span');
+  versionRow.className = 'update-item-version';
+  versionRow.textContent = pending ? 'Новое обновление' : `Версия ${version}`;
+  const badge = document.createElement('span');
+  badge.className = 'update-item-badge ' + (pending ? 'pending' : 'installed');
+  badge.textContent = pending ? 'Готово к установке' : 'Установлено';
+  versionRow.appendChild(badge);
+  const dateEl = document.createElement('span');
+  dateEl.className = 'update-item-date';
+  dateEl.textContent = date;
+  info.appendChild(versionRow);
+  info.appendChild(dateEl);
+
+  const arrow = document.createElement('span');
+  arrow.className = 'update-item-arrow';
+  arrow.textContent = '▾';
+
+  header.appendChild(info);
+  header.appendChild(arrow);
+  header.addEventListener('click', () => {
+    item.classList.toggle('open');
+    if (item.classList.contains('open')) openUpdateItemVersions.add(key);
+    else openUpdateItemVersions.delete(key);
+  });
+
+  const body = document.createElement('div');
+  body.className = 'update-item-body';
+  const list = document.createElement('ul');
+  list.className = 'update-item-notes';
+  notes.forEach(noteText => {
+    const li = document.createElement('li');
+    li.textContent = noteText;
+    list.appendChild(li);
+  });
+  body.appendChild(list);
+
+  if (pending) {
+    const installBtn = document.createElement('button');
+    installBtn.type = 'button';
+    installBtn.className = 'btn btn-primary update-item-install-btn';
+    installBtn.textContent = 'Скачать и установить';
+    installBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyPendingUpdate(() => {
+        installBtn.disabled = true;
+        installBtn.textContent = 'Устанавливаем…';
+      });
+    });
+    body.appendChild(installBtn);
+  }
+
+  item.appendChild(header);
+  item.appendChild(body);
+  return item;
+}
+
+checkUpdateBtn.addEventListener('click', () => {
+  if (updateTabChecking || !('serviceWorker' in navigator)) return;
+  updateTabChecking = true;
+  renderUpdateTab();
+  const finish = () => {
+    updateTabChecking = false;
+    renderUpdateTab();
+  };
+  if (swRegistration) {
+    swRegistration.update().then(() => {
+      // Если update() нашёл новую версию, onUpdateAvailable() уже выставит
+      // updateAvailable = true через событие 'updatefound' до того, как
+      // сработает этот then — небольшая пауза даёт этому шансу случиться.
+      setTimeout(finish, 700);
+    }).catch(finish);
+  } else {
+    setTimeout(finish, 700);
+  }
+});
+
+updateAllBtn.addEventListener('click', () => {
+  applyPendingUpdate(() => {
+    updateAllBtn.disabled = true;
+    updateAllBtn.textContent = 'Обновляем…';
+  });
+});

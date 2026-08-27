@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=10.1.2">
+  <link rel="stylesheet" href="style.css?v=10.2.0">
 </head>
 <body>
 
@@ -147,7 +147,7 @@
             </div>
             <div class="sidebar-actions">
               <button id="profile-btn" class="btn btn-profile">Профиль</button>
-              <button id="settings-btn" class="btn btn-icon-profile" title="Настройки" aria-label="Настройки">⚙️</button>
+              <button id="settings-btn" class="btn btn-icon-profile" title="Настройки" aria-label="Настройки">⚙️<span id="settings-update-dot" class="settings-badge-dot" style="display:none"></span></button>
             </div>
             <button id="logout-btn" class="btn btn-logout">Выйти</button>
             <span class="app-version" id="app-version-sidebar"></span>
@@ -246,17 +246,47 @@
 
     <!-- Модальное окно настроек -->
     <div id="settings-modal" class="modal" style="display:none">
-      <div class="modal-content">
-        <h3>Настройки чата</h3>
-        <div class="form-group">
-          <label for="animation-select">Фоновая анимация</label>
-          <select id="animation-select">
-            <option value="none">Без анимации</option>
-            <option value="sakura">🌸 Сакура</option>
-            <option value="rain">🌧 Дождь</option>
-            <option value="leaves">🍂 Листья</option>
-          </select>
+      <div class="modal-content modal-content-wide">
+        <h3>Настройки</h3>
+
+        <div class="mode-toggle settings-tabs">
+          <button type="button" class="mode-btn active" id="settings-tab-chat-btn" data-tab="chat">Чат</button>
+          <button type="button" class="mode-btn" id="settings-tab-update-btn" data-tab="update">Обновление и безопасность</button>
         </div>
+
+        <!-- Вкладка: Чат -->
+        <div id="settings-tab-chat" class="settings-tab-panel">
+          <div class="form-group">
+            <label for="animation-select">Фоновая анимация</label>
+            <select id="animation-select">
+              <option value="none">Без анимации</option>
+              <option value="sakura">🌸 Сакура</option>
+              <option value="rain">🌧 Дождь</option>
+              <option value="leaves">🍂 Листья</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Вкладка: Обновление и безопасность -->
+        <div id="settings-tab-update" class="settings-tab-panel" style="display:none">
+          <div class="update-status-card" id="update-status-card">
+            <div class="update-status-row">
+              <span class="update-status-icon" id="update-status-icon">🛡️</span>
+              <div class="update-status-text">
+                <span id="update-status-title">Версия Искры</span>
+                <span id="update-status-subtitle" class="update-status-subtitle">Нажмите «Проверить обновления»</span>
+              </div>
+            </div>
+            <button type="button" id="check-update-btn" class="btn btn-secondary full-width">Проверить обновления</button>
+          </div>
+
+          <div class="update-list-header">
+            <span>Обновления</span>
+            <button type="button" id="update-all-btn" class="btn btn-primary btn-compact" disabled>Обновить всё</button>
+          </div>
+          <div id="update-list" class="update-list"></div>
+        </div>
+
         <div class="modal-buttons">
           <button id="save-settings" class="btn btn-primary">Сохранить</button>
           <button id="close-settings" class="btn btn-secondary">Отмена</button>
