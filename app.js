@@ -11,7 +11,7 @@ const firebaseConfig = {
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, deleteField, runTransaction, Timestamp } from 'firebase/firestore';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -121,8 +121,23 @@ let statusCleanupInterval = null;
 
 const STATUS_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
+// ============ Индикатор "печатает…" ============
+let activeChatMeta = { type: 'general' };
+let chatHeaderBaseSub = '';
+let chatHeaderBaseOffline = false;
+let unsubscribeTyping = null;
+let typingRawData = {}; // сырые данные документа typing/{chatId}: uid -> Timestamp
+let othersTyping = new Set(); // uid других пользователей, которые печатают прямо сейчас (свежие записи)
+let isTypingActive = false; // отправили ли мы уже свой "печатает" в текущий чат
+let typingStopTimeout = null;
+let typingBubbleEl = null;
+let typingKeepAliveInterval = null;
+const TYPING_IDLE_MS = 3000; // пауза в наборе текста, после которой считаем что человек перестал печатать
+const TYPING_STALE_MS = 8000; // на случай если чужая вкладка закрылась и не успела отправить "стоп" — не показываем индикатор вечно
+const TYPING_KEEPALIVE_MS = 4000; // обновление метки времени, пока человек печатает без пауз дольше TYPING_STALE_MS
+
 // ============ Версия приложения ============
-const APP_VERSION = '10.0.11';
+const APP_VERSION = '10.1.2';
 const versionLabel = `Версия Искры ${APP_VERSION}`;
 if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
 if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
@@ -418,14 +433,23 @@ function refreshPresenceUI(uid) {
   document.querySelectorAll(`.status-dot[data-uid="${uid}"]`).forEach(dot => dot.classList.toggle('online', isOnline));
   if (chatHeaderStatusDot.dataset.uid === uid) {
     chatHeaderStatusDot.classList.toggle('online', isOnline);
-    chatHeaderSub.textContent = isOnline ? 'в сети' : 'не в сети';
-    chatHeaderSub.classList.toggle('offline', !isOnline);
+    setChatHeaderBase(isOnline ? 'в сети' : 'не в сети', !isOnline);
   }
 }
 setInterval(() => { presenceDataCache.forEach((_, uid) => refreshPresenceUI(uid)); }, 15000);
 
 function ensureUserStatusListener(uid) {
-  if (!uid || userStatusListeners.has(uid)) return;
+  if (!uid) return;
+  // БАГФИКС (видимость статуса онлайн/офлайн): раньше при повторном вызове
+  // для уже отслеживаемого uid (например, точка статуса нового сообщения
+  // или нового пункта в списке чатов от человека, за которым мы и так уже
+  // следим) функция сразу выходила и ничего не делала. В итоге у ТОЛЬКО ЧТО
+  // добавленного в DOM элемента не было своего актуального состояния —
+  // точка оставалась в состоянии по умолчанию (невидима), пока не придёт
+  // следующее обновление presence с сервера (до 25с) или не сработает общий
+  // 15-секундный интервал синхронизации. Теперь при каждом вызове мы сразу
+  // же применяем уже известное из кэша состояние к текущему DOM.
+  if (userStatusListeners.has(uid)) { refreshPresenceUI(uid); return; }
   const unsub = onSnapshot(doc(db, 'users', uid), snap => {
     presenceDataCache.set(uid, snap.exists() ? snap.data() : null);
     refreshPresenceUI(uid);
@@ -537,20 +561,34 @@ async function startPrivateChat(otherUser) {
   const chatId = privateChatId(currentUser.uid, otherUser.uid);
   const chatRef = doc(db, 'chats', chatId);
   try {
-    const snap = await getDoc(chatRef);
-    if (!snap.exists()) {
-      await setDoc(chatRef, {
-        type: 'private',
-        members: [currentUser.uid, otherUser.uid],
-        memberInfo: {
-          [currentUser.uid]: { nickname: currentUserData.nickname || 'Пользователь', avatarUrl: currentUserData.avatarUrl || '' },
-          [otherUser.uid]: { nickname: otherUser.nickname || 'Пользователь', avatarUrl: otherUser.avatarUrl || '' }
-        },
-        createdBy: currentUser.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-    }
+    // БАГФИКС (гонка при одновременном открытии чата): раньше здесь было
+    // "прочитать через getDoc, и если документа нет — создать через setDoc".
+    // Если два человека одновременно первый раз открывали переписку друг с
+    // другом, оба могли успеть прочитать "документа ещё нет" ДО того, как
+    // кто-то из них его создал, и тогда второй setDoc пытался перезаписать
+    // уже существующий документ с другим createdBy — Правила Firestore
+    // корректно это отклоняли (защищая исходного автора чата), но человек
+    // при этом видел ошибку "Не удалось открыть чат" на пустом месте.
+    // runTransaction делает "прочитать и создать" атомарно: если второй
+    // клиент столкнётся с уже создающимся документом, Firestore сам
+    // повторит его транзакцию — и при повторном чтении он увидит, что чат
+    // уже существует, и просто ничего не станет создавать.
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(chatRef);
+      if (!snap.exists()) {
+        tx.set(chatRef, {
+          type: 'private',
+          members: [currentUser.uid, otherUser.uid],
+          memberInfo: {
+            [currentUser.uid]: { nickname: currentUserData.nickname || 'Пользователь', avatarUrl: currentUserData.avatarUrl || '' },
+            [otherUser.uid]: { nickname: otherUser.nickname || 'Пользователь', avatarUrl: otherUser.avatarUrl || '' }
+          },
+          createdBy: currentUser.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
+    });
   } catch (e) {
     alert('Не удалось открыть чат. Попробуйте ещё раз.');
     return;
@@ -590,9 +628,14 @@ function refreshActiveChatHighlight() {
 
 function selectChat(chatId, title, meta) {
   if (activeChatId === chatId) return;
+  // Прежде чем переключиться, сообщаем остальным, что мы прекратили печатать
+  // в чате, который покидаем — иначе наш индикатор "печатает…" мог бы
+  // "зависнуть" там до истечения TYPING_STALE_MS.
+  stopTypingSignal();
   activeChatId = chatId;
   currentChatTitle.textContent = title;
   subscribeToMessages(chatId);
+  subscribeToTyping(chatId);
   updateChatHeaderMeta(meta || { type: 'general' });
   updateComposerAccess(chatId);
   refreshActiveChatHighlight();
@@ -601,6 +644,7 @@ function selectChat(chatId, title, meta) {
 
 function updateChatHeaderMeta(meta) {
   if (unsubscribeHeaderPresence) { unsubscribeHeaderPresence(); unsubscribeHeaderPresence = null; }
+  activeChatMeta = meta;
   if (meta.type === 'private' && meta.otherUid) {
     chatHeaderAvatarWrap.style.display = 'flex';
     chatHeaderStatusDot.dataset.uid = meta.otherUid;
@@ -611,8 +655,7 @@ function updateChatHeaderMeta(meta) {
     // onSnapshot — на медленной сети это было заметно. Теперь сбрасываем их
     // сразу же, синхронно, ещё до прихода данных.
     chatHeaderAvatar.src = DEFAULT_AVATAR;
-    chatHeaderSub.textContent = '…';
-    chatHeaderSub.classList.remove('offline');
+    setChatHeaderBase('…', false);
     unsubscribeHeaderPresence = onSnapshot(doc(db, 'users', meta.otherUid), snap => {
       const data = snap.exists() ? snap.data() : {};
       chatHeaderAvatar.src = data.avatarUrl || DEFAULT_AVATAR;
@@ -623,14 +666,12 @@ function updateChatHeaderMeta(meta) {
     chatHeaderAvatarWrap.style.display = 'none';
     delete chatHeaderStatusDot.dataset.uid;
     chatHeaderStatusDot.classList.remove('online');
-    chatHeaderSub.textContent = `${meta.memberCount || ''} участник(ов)`.trim();
-    chatHeaderSub.classList.remove('offline');
+    setChatHeaderBase(`${meta.memberCount || ''} участник(ов)`.trim(), false);
   } else {
     chatHeaderAvatarWrap.style.display = 'none';
     delete chatHeaderStatusDot.dataset.uid;
     chatHeaderStatusDot.classList.remove('online');
-    chatHeaderSub.textContent = meta.subtitle || 'Открытый чат для всех';
-    chatHeaderSub.classList.remove('offline');
+    setChatHeaderBase(meta.subtitle || 'Открытый чат для всех', false);
   }
 }
 
@@ -721,6 +762,7 @@ createGroupBtn.addEventListener('click', createGroupChat);
 function subscribeToMessages(chatId) {
   if (unsubscribeMessages) { unsubscribeMessages(); unsubscribeMessages = null; }
   messagesList.innerHTML = '';
+  typingBubbleEl = null; // старый элемент индикатора уже удалён вместе с innerHTML
   let firstBatch = true;
   const qRef = query(collection(db, 'messages'), where('chatId','==',chatId), orderBy('timestamp','asc'));
   unsubscribeMessages = onSnapshot(qRef, snap => {
@@ -734,6 +776,9 @@ function subscribeToMessages(chatId) {
         updateMessageTimeInUI(change.doc.id, change.doc.data());
       }
     });
+    // Новые сообщения вставляются перед индикатором "печатает…", если он
+    // сейчас показан на экране — он должен оставаться самым нижним элементом.
+    if (typingBubbleEl && typingBubbleEl.isConnected) messagesList.appendChild(typingBubbleEl);
     if (added && (firstBatch || wasAtBottom)) scrollToBottom();
     firstBatch = false;
   }, (err) => {
@@ -826,6 +871,10 @@ async function sendMessage(text) {
   const trimmed = text.trim();
   if (!trimmed) return;
 
+  // Сообщение отправляется — сразу гасим свой индикатор "печатает…", не
+  // дожидаясь таймаута бездействия (как в WhatsApp/Telegram).
+  stopTypingSignal();
+
   // БАГФИКС: раньше chatId для обновления lastMessage/updatedAt читался из
   // глобальной activeChatId уже ПОСЛЕ await addDoc(...). Если человек успевал
   // переключиться на другой чат, пока сообщение ещё летело на сервер (что
@@ -871,6 +920,144 @@ async function sendMessage(text) {
     } catch (e) { /* не критично для отправки самого сообщения */ }
   }
 }
+
+// ============ Индикатор "печатает…" (как в WhatsApp) ============
+// Пока пользователь набирает сообщение, в Firestore обновляется документ
+// typing/{chatId} вида { [uid]: serverTimestamp() }. Остальные участники
+// чата подписаны на этот документ и, если запись свежая, показывают
+// анимированные три точки внизу переписки и текст "печатает…" в шапке.
+function typingDocRef(chatId) { return doc(db, 'typing', chatId); }
+
+async function setTypingState(chatId, active) {
+  if (!currentUser) return;
+  try {
+    if (active) {
+      await setDoc(typingDocRef(chatId), { [currentUser.uid]: serverTimestamp() }, { merge: true });
+    } else {
+      await updateDoc(typingDocRef(chatId), { [currentUser.uid]: deleteField() });
+    }
+  } catch (e) {
+    // Не критично: если запись "печатает" не ушла — просто никто её не увидит.
+    // Если не получилось её убрать (например, документа ещё не существует) —
+    // она сама перестанет считаться актуальной через TYPING_STALE_MS.
+  }
+}
+function handleTypingInput() {
+  if (!currentUser || activeChatId === SUPPORT_CHAT_ID) return;
+  if (!isTypingActive) {
+    isTypingActive = true;
+    setTypingState(activeChatId, true);
+    // БАГФИКС (индикатор гас у собеседника посреди набора длинного
+    // сообщения): раньше serverTimestamp() в Firestore записывался только
+    // один раз, в момент самого первого нажатия клавиши в этой "сессии"
+    // набора текста — дальше каждое следующее нажатие лишь откладывало
+    // локальный таймаут "когда считать, что человек остановился", но саму
+    // запись в базе не обновляло. Если человек печатал без паузы дольше
+    // TYPING_STALE_MS (8с) — например, длинное сообщение — эта метка
+    // времени "протухала", и получатель видел, что индикатор "печатает…"
+    // погас, хотя набор текста и не думал прекращаться. Теперь, пока идёт
+    // непрерывный набор, метка времени в Firestore периодически обновляется.
+    typingKeepAliveInterval = setInterval(() => setTypingState(activeChatId, true), TYPING_KEEPALIVE_MS);
+  }
+  if (typingStopTimeout) clearTimeout(typingStopTimeout);
+  typingStopTimeout = setTimeout(stopTypingSignal, TYPING_IDLE_MS);
+}
+function stopTypingSignal() {
+  if (typingStopTimeout) { clearTimeout(typingStopTimeout); typingStopTimeout = null; }
+  if (typingKeepAliveInterval) { clearInterval(typingKeepAliveInterval); typingKeepAliveInterval = null; }
+  if (!isTypingActive || !currentUser) return;
+  isTypingActive = false;
+  setTypingState(activeChatId, false);
+}
+
+function subscribeToTyping(chatId) {
+  if (unsubscribeTyping) { unsubscribeTyping(); unsubscribeTyping = null; }
+  typingRawData = {};
+  othersTyping.clear();
+  updateTypingUI();
+  if (chatId === SUPPORT_CHAT_ID) return; // read-only канал — печатать туда нельзя, индикатор не нужен
+  unsubscribeTyping = onSnapshot(typingDocRef(chatId), snap => {
+    typingRawData = snap.exists() ? snap.data() : {};
+    recomputeOthersTyping();
+  }, () => { /* нет прав или сети — просто не показываем индикатор */ });
+}
+function stopTypingSubscription() {
+  if (unsubscribeTyping) { unsubscribeTyping(); unsubscribeTyping = null; }
+  typingRawData = {};
+  othersTyping.clear();
+  updateTypingUI();
+}
+// Помимо живых обновлений onSnapshot, периодически перепроверяем "свежесть"
+// последних известных записей — на случай, если у печатавшего человека
+// закрылась вкладка/пропала сеть до того, как он успел отправить "стоп"
+// (deleteField). Так индикатор не залипнет навсегда, а погаснет сам, максимум
+// через TYPING_STALE_MS.
+function recomputeOthersTyping() {
+  const now = Date.now();
+  let changed = false;
+  const fresh = new Set();
+  Object.entries(typingRawData).forEach(([uid, ts]) => {
+    if (!currentUser || uid === currentUser.uid) return;
+    const ms = ts && ts.toMillis ? ts.toMillis() : 0;
+    if (ms && (now - ms) < TYPING_STALE_MS) fresh.add(uid);
+  });
+  if (fresh.size !== othersTyping.size || Array.from(fresh).some(uid => !othersTyping.has(uid))) changed = true;
+  othersTyping = fresh;
+  if (changed) updateTypingUI();
+}
+setInterval(() => { if (unsubscribeTyping) recomputeOthersTyping(); }, 3000);
+
+function updateTypingUI() {
+  renderTypingBubble();
+  applyChatHeaderSubText();
+}
+function typingHeaderText() {
+  if (activeChatMeta.type === 'private') return 'печатает…';
+  const names = Array.from(othersTyping).map(uid => (presenceDataCache.get(uid) && presenceDataCache.get(uid).nickname) || 'Кто-то');
+  if (names.length === 1) return `${names[0]} печатает…`;
+  const shown = names.slice(0, 2).join(', ');
+  const rest = names.length - 2;
+  return `Печатают: ${shown}${rest > 0 ? ' и ещё ' + rest : ''}`;
+}
+function setChatHeaderBase(text, offline) {
+  chatHeaderBaseSub = text;
+  chatHeaderBaseOffline = !!offline;
+  applyChatHeaderSubText();
+}
+function applyChatHeaderSubText() {
+  if (othersTyping.size > 0 && activeChatId !== SUPPORT_CHAT_ID) {
+    chatHeaderSub.textContent = typingHeaderText();
+    chatHeaderSub.classList.remove('offline');
+    chatHeaderSub.classList.add('typing');
+  } else {
+    chatHeaderSub.textContent = chatHeaderBaseSub;
+    chatHeaderSub.classList.toggle('offline', chatHeaderBaseOffline);
+    chatHeaderSub.classList.remove('typing');
+  }
+}
+function renderTypingBubble() {
+  const shouldShow = othersTyping.size > 0 && activeChatId !== SUPPORT_CHAT_ID;
+  if (!shouldShow) {
+    if (typingBubbleEl) { typingBubbleEl.remove(); typingBubbleEl = null; }
+    return;
+  }
+  const wasAtBottom = isScrolledToBottom();
+  if (!typingBubbleEl) {
+    const firstUid = Array.from(othersTyping)[0];
+    const avatarUrl = (presenceDataCache.get(firstUid) && presenceDataCache.get(firstUid).avatarUrl) || DEFAULT_AVATAR;
+    typingBubbleEl = document.createElement('div');
+    typingBubbleEl.className = 'message other typing-indicator-message';
+    typingBubbleEl.innerHTML = `
+      <div class="message-avatar-wrap avatar-wrap"><img class="message-avatar" src="${escapeHtml(avatarUrl)}" alt=""></div>
+      <div class="typing-bubble"><span></span><span></span><span></span></div>`;
+  }
+  // Индикатор всегда должен оставаться самым нижним элементом переписки.
+  messagesList.appendChild(typingBubbleEl);
+  if (wasAtBottom) scrollToBottom();
+}
+
+messageInput.addEventListener('input', handleTypingInput);
+messageInput.addEventListener('blur', stopTypingSignal);
 
 // Эмодзи
 const emojis = ['😀','😂','😍','😎','🥳','😢','😡','👍','👎','❤️','🔥','🎉','💡','✨','🙈','🍕','🚀','⭐','⚡','💬','✅','❌','🤔','👀','💪','🙏','🤗','😴','🤩','😇'];
@@ -1395,11 +1582,14 @@ onAuthStateChanged(auth, async user => {
     if (selfStatusDot) selfStatusDot.classList.add('online');
     showScreen(chatScreen);
     subscribeToMessages(activeChatId);
+    subscribeToTyping(activeChatId);
     subscribeToChatList();
     applyCurrentAnimation();
     startPresenceHeartbeat();
     maybeSendPhoneReminder(user.uid, currentUserData);
   } else {
+    stopTypingSignal();
+    stopTypingSubscription();
     currentUser=null; currentUserData={nickname:'',avatarUrl:'',animation:'none'};
     if(unsubscribeMessages){unsubscribeMessages();unsubscribeMessages=null;}
     if(unsubscribeChatList){unsubscribeChatList();unsubscribeChatList=null;}
