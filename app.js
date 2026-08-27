@@ -137,7 +137,7 @@ const TYPING_STALE_MS = 8000; // на случай если чужая вкла�
 const TYPING_KEEPALIVE_MS = 4000; // обновление метки времени, пока человек печатает без пауз дольше TYPING_STALE_MS
 
 // ============ Версия приложения ============
-const APP_VERSION = '10.1.2';
+const APP_VERSION = '10.1.3';
 const versionLabel = `Версия Искры ${APP_VERSION}`;
 if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
 if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
@@ -461,10 +461,19 @@ function clearUserStatusListeners() {
   userStatusListeners.clear();
   presenceDataCache.clear();
 }
-async function setOnline(state) {
+// БАГФИКС (стабильность онлайн-статуса): раньше при обрыве связи ошибка
+// записи просто проглатывалась и следующая попытка происходила только на
+// очередном 25-секундном тике — в сумме человек мог напрасно висеть
+// "офлайн" у собеседников почти все 50с таймаута из-за одной короткой
+// просадки сети. Теперь при неудаче делаем один быстрый повтор через 3с,
+// не дожидаясь общего интервала.
+async function setOnline(state, isRetry) {
   if (!currentUser) return;
-  try { await updateDoc(doc(db, 'users', currentUser.uid), { online: state, lastActive: serverTimestamp() }); }
-  catch (e) { /* нет соединения — не критично */ }
+  try {
+    await updateDoc(doc(db, 'users', currentUser.uid), { online: state, lastActive: serverTimestamp() });
+  } catch (e) {
+    if (!isRetry) setTimeout(() => setOnline(state, true), 3000);
+  }
 }
 function startPresenceHeartbeat() {
   stopPresenceHeartbeat();
@@ -479,7 +488,19 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) setOnline(false);
   else setOnline(true);
 });
-window.addEventListener('beforeunload', () => { setOnline(false); });
+// БАГФИКС (стабильность статуса на мобильных): 'beforeunload' на iOS Safari
+// и в большинстве мобильных браузеров срабатывает ненадёжно — при закрытии
+// вкладки/уходе в другое приложение событие часто не приходит вовсе, и
+// человек ещё до 50с висел "в сети", уже покинув приложение. 'pagehide'
+// поддерживается кроссбраузерно и на мобильных, поэтому слушаем оба.
+function markOfflineOnLeave() { setOnline(false); }
+window.addEventListener('beforeunload', markOfflineOnLeave);
+window.addEventListener('pagehide', markOfflineOnLeave);
+// БАГФИКС (быстрое восстановление статуса): раньше после обрыва и
+// восстановления сети собственный статус "в сети" обновлялся только на
+// следующем тике heartbeat (до 25с простоя). Теперь при возврате
+// соединения (событие 'online') статус отправляется сразу.
+window.addEventListener('online', () => { if (currentUser && !document.hidden) setOnline(true); });
 
 // ============ Личные и групповые чаты ============
 function privateChatId(uidA, uidB) {
