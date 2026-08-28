@@ -597,12 +597,13 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
   * { animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }
 }
 
-/* ============ Оптимизация для слабых ПК/ноутбуков и телефонов ============
-   Класс .low-power ставится в app.js на <html> для устройств с малым числом
-   ядер CPU/памяти, для тач-устройств (телефоны) и при системной настройке
-   "меньше анимаций". backdrop-filter — один из самых дорогих CSS-эффектов
-   по нагрузке на GPU, особенно на слабых чипах, поэтому именно его в первую
-   очередь урезаем; сами интерфейсы остаются читаемыми. */
+/* ============ Умная оптимизация: слабые/старые ПК, ноутбуки и телефоны ============
+   Класс .low-power ставится в app.js на <html>, когда умная оптимизация
+   активна — либо по автоопределению (мало ядер CPU/памяти, тач-устройство,
+   системная настройка "меньше анимаций"), либо потому что пользователь сам
+   включил её в Настройках. backdrop-filter — один из самых дорогих
+   CSS-эффектов по нагрузке на GPU, особенно на слабых чипах, поэтому именно
+   его в первую очередь урезаем; сами интерфейсы остаются читаемыми. */
 .low-power .auth-container { backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
 .low-power .chat-header,
 .low-power .message-form,
@@ -612,6 +613,38 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 .low-power .splash-orb { filter:blur(6px); }
 .low-power .message,
 .low-power .message-bubble.emoji-only { animation-duration:0.15s; }
+
+/* ============ Класс .perf-mode: усиленная экономия ============
+   Ставится ТОЛЬКО когда пользователь вручную включил "Умная оптимизация" в
+   Настройках (не просто мягкое автоопределение) — значит человек осознанно
+   выбрал максимальную экономию ресурсов/батареи в обмен на часть визуала.
+   Убираем backdrop-filter совсем (не просто уменьшаем), гасим декоративные
+   тени и самые дорогие transition/hover-эффекты. */
+.perf-mode .auth-container,
+.perf-mode .chat-header,
+.perf-mode .message-form,
+.perf-mode .composer-locked-notice,
+.perf-mode .status-viewer-viewers,
+.perf-mode .modal,
+.perf-mode .emoji-panel { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+.perf-mode .splash-orb { display:none; }
+.perf-mode .message-avatar,
+.perf-mode .message-bubble,
+.perf-mode .chat-item.active,
+.perf-mode .btn-primary,
+.perf-mode .status-dot.online,
+.perf-mode .avatar-btn-lg,
+.perf-mode .system-bubble { box-shadow:none !important; }
+.perf-mode .chat-item,
+.perf-mode .emoji-panel span,
+.perf-mode .update-item-arrow,
+.perf-mode #message-input,
+.perf-mode .btn { transition:none !important; }
+.perf-mode .btn:active { transform:none; }
+.perf-mode .animation-container { display:none !important; }
+
+.optim-status { font-size:0.78rem; color:var(--text-tertiary); margin-top:8px; line-height:1.4; }
+.optim-hint { font-size:0.78rem; color:var(--text-tertiary); margin-top:4px; line-height:1.4; opacity:0.85; }
 
 /* ============ Статусы: раскладка под ПК/ноутбуки ============ */
 @media (min-width:1000px) {

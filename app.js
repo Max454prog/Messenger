@@ -56,6 +56,8 @@ const emojiPanel = document.getElementById('emoji-panel');
 const settingsBtn = document.getElementById('settings-btn');
 const settingsModal = document.getElementById('settings-modal');
 const animationSelect = document.getElementById('animation-select');
+const optimToggleBtns = Array.from(document.querySelectorAll('#optim-toggle .mode-btn'));
+const optimStatusText = document.getElementById('optim-status-text');
 const saveSettingsBtn = document.getElementById('save-settings');
 const closeSettingsBtn = document.getElementById('close-settings');
 const settingsTabChatBtn = document.getElementById('settings-tab-chat-btn');
@@ -149,7 +151,7 @@ const TYPING_STALE_MS = 8000; // на случай если чужая вкла�
 const TYPING_KEEPALIVE_MS = 4000; // обновление метки времени, пока человек печатает без пауз дольше TYPING_STALE_MS
 
 // ============ Версия приложения ============
-const APP_VERSION = '10.2.0';
+const APP_VERSION = '10.3.0';
 const versionLabel = `Версия Искры ${APP_VERSION}`;
 if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
 if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
@@ -159,6 +161,16 @@ if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
 // Отображается в настройках как накопленный список уже установленных обновлений;
 // самая свежая запись должна совпадать с APP_VERSION.
 const UPDATE_CHANGELOG = [
+  {
+    version: '10.3.0',
+    date: '28.08.2026',
+    notes: [
+      'Новая функция «Умная оптимизация» в Настройках → Чат: авто/вкл/выкл экономия ресурсов для слабых и старых процессоров телефонов, ноутбуков и ПК',
+      'При включённой оптимизации: реже опрашивается онлайн-статус, не грузится библиотека анимации эмодзи, отключаются фоновые декоративные частицы',
+      'Усиленный режим без размытия фона (backdrop-filter) и лишних теней/переходов для самых слабых устройств',
+      'Мелкие исправления стабильности и производительности интерфейса'
+    ]
+  },
   {
     version: '10.2.0',
     date: '28.08.2026',
@@ -204,25 +216,76 @@ const UPDATE_CHANGELOG = [
   }
 ];
 
-// ============ Оптимизация для слабых ПК/ноутбуков и телефонов ============
-// Определяем один раз при загрузке, "слабое" ли устройство: мало ядер CPU,
+// ============ Умная оптимизация (для слабых/старых ПК, ноутбуков и телефонов) ============
+// Определяем при загрузке "сырые" признаки слабого устройства: мало ядер CPU,
 // мало оперативной памяти, тач-экран (телефоны/планшеты — там всегда нет
 // ховера, и обычно GPU слабее, чем у настольного ПК) или системная настройка
-// "уменьшить анимации". По этому классу CSS сам снижает интенсивность самых
-// дорогих эффектов (backdrop-filter blur и т.п.), а JS ниже уменьшает число
-// частиц фоновой анимации — так одна и та же кодовая база остаётся плавной
-// и на мощном ПК, и на бюджетном телефоне.
+// "уменьшить анимации". Это только сигнал устройства — сам пользователь может
+// переопределить его в Настройках («Авто» / «Включена» / «Выключена»), потому
+// что автоопределение не всегда угадывает (например старый ноутбук на
+// батарее с мощным на бумаге CPU, но троттлящим от перегрева). Настройка
+// хранится в localStorage, а не в профиле — она описывает возможности
+// конкретного устройства, а не аккаунта, и должна остаться прежней даже
+// если с этого же телефона войдёт другой пользователь.
 const isTouchDevice = window.matchMedia('(hover:none), (pointer:coarse)').matches;
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const isLowPowerDevice = isTouchDevice || prefersReducedMotion
+const rawDeviceLowPower = isTouchDevice || prefersReducedMotion
   || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
   || (navigator.deviceMemory && navigator.deviceMemory <= 4);
-if (isLowPowerDevice) document.documentElement.classList.add('low-power');
+
+const SMART_OPT_STORAGE_KEY = 'iskra-smart-optimization-mode';
+function readSmartOptMode() {
+  const saved = localStorage.getItem(SMART_OPT_STORAGE_KEY);
+  return (saved === 'on' || saved === 'off') ? saved : 'auto';
+}
+let smartOptMode = readSmartOptMode(); // 'auto' | 'on' | 'off'
+
+// Эффективное состояние оптимизации прямо сейчас: форсированное пользователем
+// значение имеет приоритет над автоопределением.
+function isLowPowerActive() {
+  if (smartOptMode === 'on') return true;
+  if (smartOptMode === 'off') return false;
+  return rawDeviceLowPower;
+}
+// «perf-mode» — усиленный уровень экономии ресурсов, применяется только когда
+// пользователь САМ явно включил оптимизацию (принудительно), а не когда она
+// сработала лишь по автоопределению — так «Авто» остаётся мягким и не портит
+// вид на устройствах, которые лишь пограничо попали под эвристику.
+function applySmartOptimizationClasses() {
+  const active = isLowPowerActive();
+  document.documentElement.classList.toggle('low-power', active);
+  document.documentElement.classList.toggle('perf-mode', smartOptMode === 'on');
+}
+applySmartOptimizationClasses();
+
+function setSmartOptMode(mode) {
+  if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return;
+  smartOptMode = mode;
+  try { localStorage.setItem(SMART_OPT_STORAGE_KEY, mode); } catch (e) { /* приватный режим браузера — не критично */ }
+  applySmartOptimizationClasses();
+  // Переприменяем всё, на что влияет режим, немедленно, а не только при
+  // следующей перезагрузке страницы.
+  if (currentUser && currentUserData) applyCurrentAnimation();
+  restartPresenceHeartbeatIfActive();
+  updateOptimizationStatusUI();
+}
+
+function updateOptimizationStatusUI() {
+  if (!optimStatusText) return;
+  const cores = navigator.hardwareConcurrency ? `${navigator.hardwareConcurrency} ядер` : 'неизвестно ядер';
+  const mem = navigator.deviceMemory ? `${navigator.deviceMemory} ГБ памяти` : 'память неизвестна';
+  const state = isLowPowerActive() ? 'активна' : 'не активна';
+  const reason = smartOptMode === 'auto'
+    ? (rawDeviceLowPower ? '(определено автоматически по характеристикам устройства)' : '(устройство достаточно мощное)')
+    : (smartOptMode === 'on' ? '(включена вручную)' : '(выключена вручную)');
+  optimStatusText.textContent = `Сейчас: ${state} ${reason}. Устройство: ${cores}, ${mem}.`;
+  optimToggleBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.optim === smartOptMode));
+}
 
 // lottie-web грузим лениво: он нужен только для анимации эмодзи по наведению
 // (актуально на ПК/ноутбуках с мышью), а весит ощутимо — на слабых
-// устройствах и телефонах (где наведения нет вовсе) незачем тратить на него
-// память и время CPU при каждом старте приложения.
+// устройствах, телефонах (где наведения нет вовсе) и когда умная оптимизация
+// активна, незачем тратить на него память и время CPU при каждом старте.
 let lottieLoadPromise = null;
 function loadLottieForce() {
   if (window.lottie) return Promise.resolve(true);
@@ -238,7 +301,10 @@ function loadLottieForce() {
   return lottieLoadPromise;
 }
 function ensureLottieLoaded() {
-  if (isTouchDevice) return Promise.resolve(false); // на тач-устройствах ховера нет — не грузим вообще
+  // На тач-устройствах ховера нет — не грузим вообще. При активной умной
+  // оптимизации (авто или вручную) тоже экономим — эффект по наведению
+  // мыши не критичен для UX, а память/CPU на слабом железе критичны.
+  if (isTouchDevice || isLowPowerActive()) return Promise.resolve(false);
   return loadLottieForce();
 }
 
@@ -540,10 +606,20 @@ async function setOnline(state, isRetry) {
 function startPresenceHeartbeat() {
   stopPresenceHeartbeat();
   setOnline(true);
-  presenceInterval = setInterval(() => { if (!document.hidden) setOnline(true); }, 25000);
+  // При активной умной оптимизации отправляем heartbeat реже — лишний сетевой
+  // запрос и запись в Firestore каждые 25с на слабом/старом устройстве тоже
+  // расходует CPU и батарею, а разница в точности статуса "онлайн" для
+  // собеседника незаметна.
+  const intervalMs = isLowPowerActive() ? 45000 : 25000;
+  presenceInterval = setInterval(() => { if (!document.hidden) setOnline(true); }, intervalMs);
 }
 function stopPresenceHeartbeat() {
   if (presenceInterval) { clearInterval(presenceInterval); presenceInterval = null; }
+}
+// Перезапускает heartbeat с актуальным интервалом при переключении режима
+// умной оптимизации в Настройках, если пользователь сейчас в сети.
+function restartPresenceHeartbeatIfActive() {
+  if (currentUser && presenceInterval) startPresenceHeartbeat();
 }
 document.addEventListener('visibilitychange', () => {
   if (!currentUser) return;
@@ -1234,6 +1310,11 @@ function startAnimation(type) {
   // запускаем — это явный сигнал пользователя не тратить ресурсы на подобные
   // эффекты, а не только сделать их короче.
   if (type === 'none' || document.hidden || prefersReducedMotion) return;
+  // Когда пользователь ВРУЧНУЮ включил умную оптимизацию (а не просто попал
+  // под мягкое автоопределение), фоновые декоративные частицы — самый
+  // "необязательный" потребитель CPU/GPU в приложении, поэтому в этом режиме
+  // отключаем их совсем: экономия заметнее любой визуальной потери.
+  if (smartOptMode === 'on') return;
   const container = document.createElement('div');
   container.className = 'animation-container';
   mainChat.appendChild(container);
@@ -1248,12 +1329,13 @@ function startAnimation(type) {
     targetContainer.appendChild(particle);
   }
 
-  // На слабых устройствах (см. isLowPowerDevice выше) частиц меньше и
+  // На слабых устройствах (см. isLowPowerActive выше) частиц меньше и
   // спавнятся они реже — ощутимо снижает нагрузку на CPU/GPU там, где это
   // критичнее всего, оставляя эффект достаточно заметным визуально.
+  const lowPower = isLowPowerActive();
   const baseCount = type === 'rain' ? 40 : 20;
-  const count = isLowPowerDevice ? Math.round(baseCount / 2) : baseCount;
-  const spawnIntervalMs = isLowPowerDevice ? 3200 : 2000;
+  const count = lowPower ? Math.round(baseCount / 2) : baseCount;
+  const spawnIntervalMs = lowPower ? 3200 : 2000;
   for (let i = 0; i < count; i++) {
     spawnParticle(container, Math.random() * 5);
   }
@@ -1283,8 +1365,12 @@ settingsTabUpdateBtn.addEventListener('click', () => setSettingsTab('update'));
 
 settingsBtn.addEventListener('click', () => {
   animationSelect.value = currentUserData.animation || 'none';
+  updateOptimizationStatusUI();
   setSettingsTab('chat');
   settingsModal.style.display = 'flex';
+});
+optimToggleBtns.forEach(btn => {
+  btn.addEventListener('click', () => setSmartOptMode(btn.dataset.optim));
 });
 closeSettingsBtn.addEventListener('click', () => settingsModal.style.display = 'none');
 saveSettingsBtn.addEventListener('click', async () => {
