@@ -65,6 +65,7 @@ const settingsTabUpdateBtn = document.getElementById('settings-tab-update-btn');
 const settingsTabChatPanel = document.getElementById('settings-tab-chat');
 const settingsTabUpdatePanel = document.getElementById('settings-tab-update');
 const updateStatusCard = document.getElementById('update-status-card');
+const updateStatusIconWrap = document.getElementById('update-status-icon-wrap');
 const updateStatusIcon = document.getElementById('update-status-icon');
 const updateStatusTitle = document.getElementById('update-status-title');
 const updateStatusSubtitle = document.getElementById('update-status-subtitle');
@@ -72,6 +73,7 @@ const checkUpdateBtn = document.getElementById('check-update-btn');
 const updateAllBtn = document.getElementById('update-all-btn');
 const updateListEl = document.getElementById('update-list');
 const settingsUpdateDot = document.getElementById('settings-update-dot');
+const settingsTabUpdateDot = document.getElementById('settings-tab-update-dot');
 const mainChat = document.getElementById('main-chat');
 const sidebar = document.getElementById('sidebar');
 const sidebarScrim = document.getElementById('sidebar-scrim');
@@ -151,7 +153,7 @@ const TYPING_STALE_MS = 8000; // на случай если чужая вкла�
 const TYPING_KEEPALIVE_MS = 4000; // обновление метки времени, пока человек печатает без пауз дольше TYPING_STALE_MS
 
 // ============ Версия приложения ============
-const APP_VERSION = '10.3.0';
+const APP_VERSION = '10.3.1';
 const versionLabel = `Версия Искры ${APP_VERSION}`;
 if (appVersionAuthEl) appVersionAuthEl.textContent = versionLabel;
 if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
@@ -161,6 +163,16 @@ if (appVersionSidebarEl) appVersionSidebarEl.textContent = versionLabel;
 // Отображается в настройках как накопленный список уже установленных обновлений;
 // самая свежая запись должна совпадать с APP_VERSION.
 const UPDATE_CHANGELOG = [
+  {
+    version: '10.3.1',
+    date: '29.08.2026',
+    notes: [
+      'Исправлена красная точка-уведомление об обновлении в Настройках: раньше она загоралась и никогда не гасла, даже после того как вкладку уже открыли и посмотрели',
+      'Точка-уведомление теперь показывается и прямо на самой вкладке «Обновление и безопасность», не только на шестерёнке',
+      'Обновлённый внешний вид вкладки «Обновление и безопасность»: карточка версии со статусом, плавное раскрытие карточек истории обновлений, время последней проверки',
+      'Список изменений в каждой версии теперь оформлен маркерами вместо сплошного текста — легче читать'
+    ]
+  },
   {
     version: '10.3.0',
     date: '28.08.2026',
@@ -1358,7 +1370,20 @@ function setSettingsTab(tab) {
   settingsTabUpdateBtn.classList.toggle('active', isUpdateTab);
   settingsTabChatPanel.style.display = isUpdateTab ? 'none' : 'flex';
   settingsTabUpdatePanel.style.display = isUpdateTab ? 'flex' : 'none';
-  if (isUpdateTab) renderUpdateTab();
+  if (isUpdateTab) {
+    renderUpdateTab();
+    // БАГФИКС: раньше красная точка-уведомление о новом обновлении (и на
+    // шестерёнке настроек, и на самой вкладке) зажигалась при обнаружении
+    // обновления, но НИГДЕ не гасла — даже после того, как человек открывал
+    // вкладку "Обновление и безопасность" и видел, что там есть новая
+    // версия. Точка-индикатор непрочитанного должна гаснуть, когда её
+    // увидели, иначе она горит бессмысленно вечно, пока не установишь
+    // обновление. Само обновление (updateAvailable) при этом никуда не
+    // девается — кнопки "Установить" остаются активными, гаснет только
+    // сама точка-уведомление.
+    if (settingsUpdateDot) settingsUpdateDot.style.display = 'none';
+    if (settingsTabUpdateDot) settingsTabUpdateDot.style.display = 'none';
+  }
 }
 settingsTabChatBtn.addEventListener('click', () => setSettingsTab('chat'));
 settingsTabUpdateBtn.addEventListener('click', () => setSettingsTab('update'));
@@ -1843,6 +1868,12 @@ function onUpdateAvailable(registration) {
   updateAvailable = true;
   showUpdateBanner(registration);
   if (settingsUpdateDot) settingsUpdateDot.style.display = 'block';
+  // Точка-уведомление ставится и прямо на саму вкладку "Обновление и
+  // безопасность" внутри настроек — так видно, что там появилось что-то
+  // новое, ещё до того, как открыта шестерёнка настроек целиком.
+  if (settingsTabUpdateDot && settingsTabUpdatePanel && settingsTabUpdatePanel.style.display === 'none') {
+    settingsTabUpdateDot.style.display = 'block';
+  }
   if (settingsTabUpdatePanel && settingsTabUpdatePanel.style.display !== 'none') {
     renderUpdateTab();
   }
@@ -1881,6 +1912,7 @@ function showUpdateBanner(registration) {
 
 // ============ Вкладка настроек "Обновление и безопасность" ============
 let updateTabChecking = false;
+let lastUpdateCheckAt = null; // Date последней ручной проверки — для подсказки "Проверено в HH:MM"
 const openUpdateItemVersions = new Set(); // какие карточки сейчас развёрнуты — сохраняем между перерисовками
 
 function renderUpdateTab() {
@@ -1890,12 +1922,13 @@ function renderUpdateTab() {
   updateStatusCard.classList.toggle('has-update', updateAvailable);
   updateStatusIcon.textContent = updateTabChecking ? '🔄' : (updateAvailable ? '⬇️' : '🛡️');
   updateStatusTitle.textContent = `Версия Искры ${APP_VERSION}`;
+  const checkedSuffix = lastUpdateCheckAt ? ` · проверено в ${formatTime(lastUpdateCheckAt)}` : '';
   if (updateTabChecking) {
     updateStatusSubtitle.textContent = 'Проверяем наличие обновлений…';
   } else if (updateAvailable) {
-    updateStatusSubtitle.textContent = 'Найдено обновление, готово к установке';
+    updateStatusSubtitle.textContent = 'Найдено обновление, готово к установке' + checkedSuffix;
   } else {
-    updateStatusSubtitle.textContent = 'У вас установлена последняя версия';
+    updateStatusSubtitle.textContent = 'У вас установлена последняя версия' + checkedSuffix;
   }
   checkUpdateBtn.disabled = updateTabChecking;
   checkUpdateBtn.textContent = updateTabChecking ? 'Проверяем…' : 'Проверить обновления';
@@ -2003,6 +2036,7 @@ checkUpdateBtn.addEventListener('click', () => {
   renderUpdateTab();
   const finish = () => {
     updateTabChecking = false;
+    lastUpdateCheckAt = new Date();
     renderUpdateTab();
   };
   if (swRegistration) {

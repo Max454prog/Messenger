@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=10.3.0">
+  <link rel="stylesheet" href="style.css?v=10.3.1">
 </head>
 <body>
 
@@ -251,7 +251,7 @@
 
         <div class="mode-toggle settings-tabs">
           <button type="button" class="mode-btn active" id="settings-tab-chat-btn" data-tab="chat">Чат</button>
-          <button type="button" class="mode-btn" id="settings-tab-update-btn" data-tab="update">Обновление и безопасность</button>
+          <button type="button" class="mode-btn settings-tab-update-btn" id="settings-tab-update-btn" data-tab="update">Обновление и безопасность<span id="settings-tab-update-dot" class="settings-badge-dot settings-badge-dot-inline" style="display:none"></span></button>
         </div>
 
         <!-- Вкладка: Чат -->
@@ -281,7 +281,7 @@
         <div id="settings-tab-update" class="settings-tab-panel" style="display:none">
           <div class="update-status-card" id="update-status-card">
             <div class="update-status-row">
-              <span class="update-status-icon" id="update-status-icon">🛡️</span>
+              <span class="update-status-icon-wrap" id="update-status-icon-wrap"><span class="update-status-icon" id="update-status-icon">🛡️</span></span>
               <div class="update-status-text">
                 <span id="update-status-title">Версия Искры</span>
                 <span id="update-status-subtitle" class="update-status-subtitle">Нажмите «Проверить обновления»</span>
@@ -291,7 +291,7 @@
           </div>
 
           <div class="update-list-header">
-            <span>Обновления</span>
+            <span>История обновлений</span>
             <button type="button" id="update-all-btn" class="btn btn-primary btn-compact" disabled>Обновить всё</button>
           </div>
           <div id="update-list" class="update-list"></div>

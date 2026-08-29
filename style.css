@@ -378,46 +378,101 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 
 /* ============ Настройки: Обновление и безопасность ============ */
 .update-status-card {
-  width:100%; display:flex; flex-direction:column; gap:12px;
-  background:var(--bg-primary); border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px;
-  transition:border-color var(--transition);
+  width:100%; display:flex; flex-direction:column; gap:14px;
+  background:linear-gradient(180deg, var(--bg-elevated), var(--bg-primary));
+  border:1px solid var(--border); border-radius:var(--radius); padding:16px;
+  transition:border-color var(--transition), box-shadow var(--transition);
 }
-.update-status-card.has-update { border-color:var(--accent-1); }
-.update-status-row { display:flex; align-items:center; gap:12px; }
-.update-status-icon { font-size:1.6rem; line-height:1; flex-shrink:0; display:inline-block; }
+.update-status-card.has-update { border-color:var(--accent-1); box-shadow:0 0 0 3px rgba(157,139,255,0.12); }
+.update-status-row { display:flex; align-items:center; gap:14px; }
+.update-status-icon-wrap {
+  width:44px; height:44px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--bg-hover); border:1px solid var(--border);
+  transition:background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+.update-status-card.has-update .update-status-icon-wrap {
+  background:rgba(157,139,255,0.14); border-color:var(--accent-1);
+  box-shadow:0 0 0 4px rgba(157,139,255,0.1);
+  animation:updatePulse 2.2s ease-in-out infinite;
+}
+@keyframes updatePulse {
+  0%, 100% { box-shadow:0 0 0 4px rgba(157,139,255,0.1); }
+  50% { box-shadow:0 0 0 8px rgba(157,139,255,0.04); }
+}
+.update-status-icon { font-size:1.35rem; line-height:1; display:inline-block; }
 .update-status-card.checking .update-status-icon { animation:spin 1s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
-.update-status-text { display:flex; flex-direction:column; min-width:0; }
-#update-status-title { font-weight:700; font-size:0.95rem; }
-.update-status-subtitle { font-size:0.8rem; color:var(--text-tertiary); margin-top:2px; }
+.update-status-text { display:flex; flex-direction:column; min-width:0; gap:3px; }
+#update-status-title { font-weight:700; font-size:0.98rem; }
+.update-status-subtitle { font-size:0.81rem; color:var(--text-tertiary); line-height:1.4; }
+.update-status-card.has-update .update-status-subtitle { color:var(--accent-1); font-weight:600; }
 
 .update-list-header { display:flex; align-items:center; justify-content:space-between; width:100%; font-size:0.82rem; font-weight:700; color:var(--text-tertiary); }
 
-.update-list { width:100%; max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
-.update-empty { font-size:0.85rem; color:var(--text-tertiary); text-align:center; padding:10px 0; }
+.update-list {
+  width:100%; max-height:300px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;
+  padding:2px; margin:-2px;
+}
+.update-empty {
+  font-size:0.85rem; color:var(--text-tertiary); text-align:center;
+  padding:22px 10px; border:1px dashed var(--border); border-radius:var(--radius-sm);
+}
 
-.update-item { width:100%; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-primary); overflow:hidden; }
-.update-item.pending { border-color:var(--accent-1); background:var(--bg-elevated); }
+.update-item {
+  width:100%; border:1px solid var(--border); border-radius:var(--radius-sm);
+  background:var(--bg-primary); overflow:hidden;
+  transition:border-color var(--transition), background var(--transition);
+}
+.update-item.pending {
+  border-color:var(--accent-1);
+  background:linear-gradient(135deg, rgba(157,139,255,0.1), rgba(91,140,255,0.05));
+}
 .update-item-header {
-  display:flex; align-items:center; gap:10px; width:100%; padding:10px 12px; background:none; border:none;
+  display:flex; align-items:center; gap:10px; width:100%; padding:12px; background:none; border:none;
   cursor:pointer; text-align:left; font-family:inherit; color:var(--text-primary);
 }
-.update-item-info { display:flex; flex-direction:column; min-width:0; flex:1; }
-.update-item-version { font-weight:600; font-size:0.88rem; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.update-item-info { display:flex; flex-direction:column; min-width:0; flex:1; gap:3px; }
+.update-item-version { font-weight:700; font-size:0.89rem; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
 .update-item-date { font-size:0.75rem; color:var(--text-tertiary); }
 .update-item-badge {
   font-size:0.6rem; font-weight:800; letter-spacing:0.03em; text-transform:uppercase;
-  padding:2px 6px; border-radius:6px; flex-shrink:0;
+  padding:3px 7px; border-radius:6px; flex-shrink:0;
 }
 .update-item-badge.installed { background:var(--bg-hover); color:var(--text-tertiary); }
-.update-item-badge.pending { background:var(--accent-grad); color:#fff; }
-.update-item-arrow { font-size:0.75rem; color:var(--text-tertiary); transition:transform var(--transition); flex-shrink:0; }
-.update-item.open .update-item-arrow { transform:rotate(180deg); }
-.update-item-body { display:none; padding:0 14px 12px 14px; }
-.update-item.open .update-item-body { display:block; }
-.update-item-notes { margin:0; padding-left:18px; font-size:0.83rem; color:var(--text-secondary); display:flex; flex-direction:column; gap:4px; }
-.update-item-notes li { line-height:1.4; }
-.update-item-install-btn { margin-top:10px; width:100%; }
+.update-item-badge.pending { background:var(--accent-grad); color:#fff; box-shadow:0 2px 8px rgba(124,108,255,0.35); }
+.update-item-arrow {
+  font-size:0.7rem; color:var(--text-tertiary); flex-shrink:0;
+  width:22px; height:22px; border-radius:50%; background:var(--bg-hover);
+  display:flex; align-items:center; justify-content:center;
+  transition:transform var(--transition), background var(--transition), color var(--transition);
+}
+.update-item.open .update-item-arrow { transform:rotate(180deg); background:var(--accent-1); color:#fff; }
+
+/* Плавная раскладка карточки при разворачивании/сворачивании — без display:none,
+   поэтому переход по высоте анимируется, а не происходит "скачком". */
+.update-item-body {
+  max-height:0; opacity:0; overflow:hidden; padding:0 14px;
+  transition:max-height 0.32s cubic-bezier(.4,0,.2,1), opacity 0.22s ease, padding 0.32s cubic-bezier(.4,0,.2,1);
+}
+.update-item.open .update-item-body { max-height:600px; opacity:1; padding:0 14px 14px 14px; }
+.update-item-notes { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:7px; }
+.update-item-notes li {
+  position:relative; padding-left:16px; font-size:0.83rem; color:var(--text-secondary); line-height:1.45;
+}
+.update-item-notes li::before {
+  content:''; position:absolute; left:0; top:0.55em; width:6px; height:6px; border-radius:50%;
+  background:var(--accent-grad);
+}
+.update-item-install-btn { margin-top:12px; width:100%; }
+
+/* Индикатор новой версии — точка прямо на вкладке настроек, а не только на
+   шестерёнке — видна ещё до того, как заглянули в саму вкладку. */
+.settings-tab-update-btn { position:relative; }
+.settings-badge-dot-inline {
+  position:static; display:inline-block; width:7px; height:7px; margin-left:6px;
+  border:none; vertical-align:middle;
+}
 
 #settings-btn { position:relative; }
 .settings-badge-dot {
@@ -507,6 +562,8 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
   .status-row:hover { background:var(--bg-hover); }
   .search-result-item:hover { background:var(--bg-hover); border-color:var(--border-strong); }
   .emoji-panel span:hover { background:var(--bg-hover); transform:scale(1.35); }
+  .update-item-header:hover { background:var(--bg-hover); }
+  .update-item-install-btn:hover:not(:disabled) { filter:brightness(1.08); }
 }
 
 
@@ -638,10 +695,13 @@ h1, h2, h3, .brand h2 { font-family:'Sora', 'Inter', sans-serif; }
 .perf-mode .chat-item,
 .perf-mode .emoji-panel span,
 .perf-mode .update-item-arrow,
+.perf-mode .update-item-body,
 .perf-mode #message-input,
 .perf-mode .btn { transition:none !important; }
 .perf-mode .btn:active { transform:none; }
 .perf-mode .animation-container { display:none !important; }
+.perf-mode .update-status-icon-wrap { animation:none !important; box-shadow:none !important; }
+.perf-mode .update-status-card.has-update { box-shadow:none !important; }
 
 .optim-status { font-size:0.78rem; color:var(--text-tertiary); margin-top:8px; line-height:1.4; }
 .optim-hint { font-size:0.78rem; color:var(--text-tertiary); margin-top:4px; line-height:1.4; opacity:0.85; }
